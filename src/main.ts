@@ -133,6 +133,32 @@ function loadVisionPreferences(): VisionPreferences {
   }
 }
 
+const FORTUNE_STORAGE_KEY = "stat-anvil-fortune-v1";
+
+function loadFortune(): Record<Side, string> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(FORTUNE_STORAGE_KEY) ?? "null");
+    if (typeof parsed === "object" && parsed !== null) {
+      const { before, after } = parsed as Partial<Record<Side, unknown>>;
+      return {
+        before: typeof before === "string" ? before : "",
+        after: typeof after === "string" ? after : "",
+      };
+    }
+  } catch {
+    // Fall through to empty values when storage is blocked or holds something unexpected.
+  }
+  return { before: "", after: "" };
+}
+
+function saveFortune(values: Record<Side, string>): void {
+  try {
+    localStorage.setItem(FORTUNE_STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // Remembering Fortune is a convenience; the review step still asks for it.
+  }
+}
+
 function query<T extends Element>(root: ParentNode, selector: string): T {
   const element = root.querySelector<T>(selector);
   if (!element) throw new Error(`Missing element: ${selector}`);
@@ -263,7 +289,7 @@ async function initialize(): Promise<void> {
       </div>
       <div class="legend">
         <span><i class="legend-swatch is-missing"></i>Missing: enter it</span>
-        <span><i class="legend-swatch is-low"></i>Low confidence: double-check</span>
+        <span><i class="legend-swatch is-low"></i>Double-check: low confidence or remembered from last time</span>
       </div>
     </section>
 
@@ -346,6 +372,8 @@ async function initialize(): Promise<void> {
     /** Passed a strict format check, so a low OCR score isn't a reason to flag it. */
     verified?: boolean;
     edited?: boolean;
+    /** Carried over from an earlier visit (Fortune), so worth a glance. */
+    remembered?: boolean;
   }
 
   const screenshotUrls: Partial<Record<Side, string>> = {};
@@ -356,8 +384,10 @@ async function initialize(): Promise<void> {
   const activeCropKinds: Record<Side, CropKind> = { before: "stats", after: "stats" };
   /** Readings per stat and side; empty until the first extraction finishes. */
   const readings = new Map<string, Record<Side, StatReading>>();
-  /** Fortune is never read from screenshots, so keep what the user typed across runs. */
-  const fortune: Record<Side, string> = { before: "", after: "" };
+  /** Fortune is never read from screenshots, so keep what the user typed across runs and visits. */
+  const fortune = loadFortune();
+  /** Whether Fortune was typed this session; until then a saved value is only a suggestion. */
+  const fortuneConfirmed: Record<Side, boolean> = { before: false, after: false };
   let pasteTarget: Side = "before";
   let extractionRun = 0;
   let localOcrWorkerPromise: Promise<LocalOcrWorker> | undefined;
@@ -758,7 +788,9 @@ async function initialize(): Promise<void> {
           if (source === "panel") return panelStats[side].find((stat) => stat.id === id) ?? missing;
           if (source === "health") return health[side] ?? missing;
           if (source === "anvil") return anvil[side] ?? missing;
-          return { value: fortune[side], confidence: 1, edited: fortune[side] !== "" };
+          return fortuneConfirmed[side]
+            ? { value: fortune[side], confidence: 1, edited: true }
+            : { value: fortune[side], confidence: 1, remembered: fortune[side] !== "" };
         };
         readings.set(id, { before: sideReading("before"), after: sideReading("after") });
       }
@@ -778,6 +810,7 @@ async function initialize(): Promise<void> {
 
   function readingState(reading: StatReading): "missing" | "low" | "ok" {
     if (reading.value.trim() === "") return "missing";
+    if (reading.remembered) return "low";
     if (reading.edited || reading.verified) return "ok";
     return reading.confidence < LOW_CONFIDENCE ? "low" : "ok";
   }
@@ -838,6 +871,8 @@ async function initialize(): Promise<void> {
           input.dataset.state = state;
           input.title = reading[side].edited
             ? "Edited by you"
+            : reading[side].remembered
+              ? "Remembered from last time; check it's still right"
             : state === "missing"
               ? source === "manual" ? "Enter this value" : "Could not read this value; enter it"
               : reading[side].verified
@@ -847,7 +882,11 @@ async function initialize(): Promise<void> {
         applyState();
         input.addEventListener("input", () => {
           reading[side] = { value: input.value.trim(), confidence: 1, edited: true };
-          if (source === "manual") fortune[side] = input.value.trim();
+          if (source === "manual") {
+            fortune[side] = input.value.trim();
+            fortuneConfirmed[side] = true;
+            saveFortune(fortune);
+          }
           applyState();
           updateChange();
           updateReviewStatus();
