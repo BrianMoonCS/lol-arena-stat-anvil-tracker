@@ -1,4 +1,5 @@
 import { createWorker, OEM, PSM } from "tesseract.js";
+import type { PixelImage } from "./pixels";
 
 export type LocalOcrWorker = Awaited<ReturnType<typeof createWorker>>;
 
@@ -34,6 +35,17 @@ export async function createLocalOcrWorker(
     preserve_interword_spaces: "1",
   });
   return worker;
+}
+
+export async function recognizeOcrPixels(
+  worker: LocalOcrWorker,
+  image: PixelImage,
+): Promise<OcrReading> {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  canvas.getContext("2d")?.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
+  return recognizeOcrCanvas(worker, canvas);
 }
 
 export async function recognizeOcrCanvas(

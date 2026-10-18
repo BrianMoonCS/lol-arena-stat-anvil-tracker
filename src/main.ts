@@ -23,13 +23,15 @@ import {
   extractPanelStats,
   PANEL_STAT_CELLS,
   parseAnvilCount,
+  readValueRegion,
   type ExtractedStat,
 } from "./core/ocr-layout";
 import {
   createLocalOcrWorker,
-  recognizeOcrCanvas,
+  recognizeOcrPixels,
   type LocalOcrWorker,
 } from "./core/ocr-engine";
+import { toPixelRect } from "./core/pixels";
 import {
   buildVisionPrompt,
   validateVisionResponse,
@@ -725,7 +727,7 @@ async function initialize(): Promise<void> {
     side: ScreenshotSide,
     worker: LocalOcrWorker,
   ): Promise<{ value: string; confidence: number } | undefined> {
-    const image = cropImages[side];
+    const image = screenshotImageData[side];
     const crops = cropRects[side];
     const detection = cropDetections[side]?.anvil;
     if (!image || !crops || !detection || detection.confidence < 0.35) return undefined;
@@ -738,8 +740,11 @@ async function initialize(): Promise<void> {
       width: (detection.valueRect.width / autoRect.width) * currentRect.width,
       height: (detection.valueRect.height / autoRect.height) * currentRect.height,
     });
-    const valueCanvas = cropImageToCanvas(image, valueRect, 4);
-    const reading = await recognizeOcrCanvas(worker, valueCanvas);
+    const reading = await readValueRegion(
+      image,
+      toPixelRect(valueRect, image.width, image.height),
+      (part) => recognizeOcrPixels(worker, part),
+    );
     const count = parseAnvilCount(reading);
     if (!count) return undefined;
     return { value: count.value, confidence: Math.min(count.confidence, detection.confidence) };
@@ -873,10 +878,22 @@ async function initialize(): Promise<void> {
     try {
       const worker = await getLocalOcrWorker();
       ocrStatusMessage.textContent = "Reading stat values by fixed panel cell…";
-      const [beforeStats, afterStats] = await Promise.all([
-        extractPanelStats(beforeCrop, (region) => recognizeOcrCanvas(worker, region)),
-        extractPanelStats(afterCrop, (region) => recognizeOcrCanvas(worker, region)),
-      ]);
+      const beforeImage = screenshotImageData.before;
+      const afterImage = screenshotImageData.after;
+      const beforeRects = cropRects.before;
+      const afterRects = cropRects.after;
+      if (!beforeImage || !afterImage || !beforeRects || !afterRects) return;
+      const recognize = (part: Parameters<typeof recognizeOcrPixels>[1]) => recognizeOcrPixels(worker, part);
+      const beforeStats = await extractPanelStats(
+        beforeImage,
+        toPixelRect(beforeRects.stats, beforeImage.width, beforeImage.height),
+        recognize,
+      );
+      const afterStats = await extractPanelStats(
+        afterImage,
+        toPixelRect(afterRects.stats, afterImage.width, afterImage.height),
+        recognize,
+      );
       await updateAnvilCountFromScreenshots(worker);
 
       const fallbackThreshold = Number(visionConfidenceControl.value) / 100;
