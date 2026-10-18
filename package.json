@@ -1,0 +1,22 @@
+{
+  "name": "stat-anvil-tracker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/copy-ocr-assets.mjs",
+    "dev": "vite",
+    "build": "tsc -b && node scripts/copy-ocr-assets.mjs && vite build",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "tesseract.js": "^7.0.0"
+  }
+}

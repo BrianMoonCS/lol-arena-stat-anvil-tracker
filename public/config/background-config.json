@@ -1,0 +1,223 @@
+{
+  "width": 1200,
+  "height": 675,
+  "backgrounds": [
+    {
+      "id": "background-1",
+      "label": "Background 1",
+      "image": "backgrounds/background-1.jpg",
+      "backgroundColor": "#17211f",
+      "accentColor": "#c8754b",
+      "slots": [
+        {
+          "id": "health",
+          "x": 290,
+          "y": 155,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "attackDamage",
+          "x": 290,
+          "y": 223,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "abilityPower",
+          "x": 290,
+          "y": 291,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "attackSpeed",
+          "x": 290,
+          "y": 359,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "armor",
+          "x": 290,
+          "y": 427,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "magicResistance",
+          "x": 290,
+          "y": 495,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "abilityHaste",
+          "x": 290,
+          "y": 563,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "criticalStrikeChance",
+          "x": 290,
+          "y": 631,
+          "width": 270,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "omnivamp",
+          "x": 895,
+          "y": 155,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "armorPenetration",
+          "x": 895,
+          "y": 223,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "magicPenetration",
+          "x": 895,
+          "y": 291,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "movementSpeed",
+          "x": 895,
+          "y": 359,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "tenacity",
+          "x": 895,
+          "y": 427,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "healAndShieldPower",
+          "x": 895,
+          "y": 495,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "fortune",
+          "x": 895,
+          "y": 563,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        },
+        {
+          "id": "anvilCount",
+          "x": 895,
+          "y": 631,
+          "width": 260,
+          "fontFamily": "Georgia, serif",
+          "fontSize": 25,
+          "color": "#f3eee4",
+          "align": "left",
+          "deltaColor": "#91d681",
+          "deltaOffsetX": 14
+        }
+      ]
+    },
+    {
+      "id": "background-2",
+      "label": "Background 2",
+      "image": "backgrounds/background-2.jpg",
+      "backgroundColor": "#17251c",
+      "accentColor": "#9caa68",
+      "slots": []
+    },
+    {
+      "id": "background-3",
+      "label": "Background 3",
+      "image": "backgrounds/background-3.jpg",
+      "backgroundColor": "#1b2429",
+      "accentColor": "#74a7a1",
+      "slots": []
+    }
+  ]
+}
