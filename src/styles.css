@@ -315,6 +315,25 @@ h1 {
   color: var(--ink);
   font: 11px var(--mono);
 }
+.manual-hint {
+  margin: -4px 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.source-tag {
+  margin-left: 3px;
+  color: var(--ember);
+  font: 8px var(--mono);
+  letter-spacing: 0.04em;
+}
+.source-tag.is-manual {
+  color: var(--muted);
+}
+.manual-row input.needs-check {
+  border-color: var(--ember);
+  background: #fbefe8;
+}
 .manual-row input:focus-visible {
   outline: 2px solid #b97656;
   outline-offset: 1px;

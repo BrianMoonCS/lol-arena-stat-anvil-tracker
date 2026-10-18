@@ -22,7 +22,9 @@ import {
 import {
   extractPanelStats,
   PANEL_STAT_CELLS,
+  HEALTH_CHARACTERS,
   parseAnvilCount,
+  readHealth,
   readValueRegion,
   type ExtractedStat,
 } from "./core/ocr-layout";
@@ -176,28 +178,29 @@ async function initialize(): Promise<void> {
           </section>
           <section class="control-section manual-section" aria-labelledby="manual-title">
             <div class="section-heading">
-              <h2 id="manual-title">Manual stats</h2>
-              <span id="anvil-count-detection" class="demo-badge">COUNT / MANUAL</span>
+              <h2 id="manual-title">Health, Fortune &amp; Anvils</h2>
+              <span id="anvil-count-detection" class="demo-badge">READ ON EXTRACT</span>
             </div>
+            <p class="manual-hint">Health and Anvil Count are read from the screenshots when you extract; edit them to correct a reading. Fortune is entered by hand.</p>
             <div class="manual-table">
               <div class="manual-row manual-header"><span>STAT</span><span>BEFORE</span><span>AFTER</span></div>
               <div class="manual-row">
-                <label for="health-before">Health</label>
+                <label for="health-before">Health <span class="source-tag">AUTO</span></label>
                 <input id="health-before" type="number" min="0" step="1" value="2130" />
                 <input id="health-after" type="number" min="0" step="1" value="2450" aria-label="Health after" />
               </div>
               <div class="manual-row">
-                <label for="fortune-before">Fortune</label>
+                <label for="fortune-before">Fortune <span class="source-tag is-manual">MANUAL</span></label>
                 <input id="fortune-before" type="number" min="0" step="1" value="4" />
                 <input id="fortune-after" type="number" min="0" step="1" value="6" aria-label="Fortune after" />
               </div>
               <div class="manual-row">
-                <label for="anvil-before">Anvil Count</label>
+                <label for="anvil-before">Anvil Count <span class="source-tag">AUTO</span></label>
                 <input id="anvil-before" type="number" min="0" step="1" value="3" />
                 <input id="anvil-after" type="number" min="0" step="1" value="4" aria-label="Anvil count after" />
               </div>
             </div>
-          </div>
+          </section>
           <div class="control-section debug-control">
             <div>
               <h2>Slot guides</h2>
@@ -211,7 +214,7 @@ async function initialize(): Promise<void> {
           </div>
           <div class="sample-note">
             <span class="note-index">A</span>
-            <p>Readings stay sample data until extraction. Health and Fortune remain manual; Anvil Count reads from its detected marker.</p>
+            <p>Readings stay sample data until extraction. Extraction reads the stat panel, Health bar and Anvil Count; Fortune is manual.</p>
           </div>
           <button id="download-button" class="download-button" type="button">
             <span aria-hidden="true">↓</span>
@@ -750,35 +753,45 @@ async function initialize(): Promise<void> {
     return { value: count.value, confidence: Math.min(count.confidence, detection.confidence) };
   }
 
-  async function updateAnvilCountFromScreenshots(worker: LocalOcrWorker): Promise<void> {
-    const [beforeReading, afterReading] = await Promise.all([
-      readAnvilCount("before", worker),
-      readAnvilCount("after", worker),
-    ]);
-    const beforeInput = app.querySelector<HTMLInputElement>("#anvil-before");
-    const afterInput = app.querySelector<HTMLInputElement>("#anvil-after");
-    if (!beforeInput || !afterInput) return;
+  async function readHealthValue(
+    side: ScreenshotSide,
+    worker: LocalOcrWorker,
+  ): Promise<{ value: string; confidence: number } | undefined> {
+    const image = screenshotImageData[side];
+    const crops = cropRects[side];
+    if (!image || !crops) return undefined;
+    return readHealth(
+      image,
+      toPixelRect(crops.health, image.width, image.height),
+      (part) => recognizeOcrPixels(worker, part, HEALTH_CHARACTERS),
+    );
+  }
 
-    if (beforeReading && beforeReading.confidence >= 0.4) beforeInput.value = beforeReading.value;
-    if (afterReading && afterReading.confidence >= 0.4) afterInput.value = afterReading.value;
-
-    if (beforeReading || afterReading) {
-      const beforeText = beforeReading
-        ? `${beforeReading.value} (${Math.round(beforeReading.confidence * 100)}%)`
-        : "manual";
-      const afterText = afterReading
-        ? `${afterReading.value} (${Math.round(afterReading.confidence * 100)}%)`
-        : "manual";
-      anvilCountStatus.textContent = `AUTO B ${beforeText} / A ${afterText}`;
-    } else {
-      const iconDetected = Boolean(
-        cropDetections.before?.anvil.method === "anvil-counter" ||
-        cropDetections.after?.anvil.method === "anvil-counter",
-      );
-      anvilCountStatus.textContent = iconDetected
-        ? "ICON FOUND / CHECK COUNT"
-        : "COUNT / MANUAL";
+  /** Fills Health and Anvil Count from the screenshots; unread fields keep their value and are flagged. */
+  async function updateBarValuesFromScreenshots(worker: LocalOcrWorker): Promise<void> {
+    const fields = [
+      { label: "HP", side: "before", inputId: "health-before", read: () => readHealthValue("before", worker) },
+      { label: "HP", side: "after", inputId: "health-after", read: () => readHealthValue("after", worker) },
+      { label: "ANVILS", side: "before", inputId: "anvil-before", read: () => readAnvilCount("before", worker) },
+      { label: "ANVILS", side: "after", inputId: "anvil-after", read: () => readAnvilCount("after", worker) },
+    ] as const;
+    const unread: string[] = [];
+    for (const field of fields) {
+      const input = app.querySelector<HTMLInputElement>(`#${field.inputId}`);
+      if (!input) continue;
+      const reading = await field.read();
+      // Health's strict "current / max" parse is the guard; Tesseract under-scores that text.
+      const ok = reading !== undefined && (field.label === "HP" || reading.confidence >= 0.4);
+      if (reading && ok) {
+        input.value = reading.value;
+        input.title = `Read from the ${field.side} screenshot (${Math.round(reading.confidence * 100)}% OCR confidence)`;
+      } else {
+        input.title = `Could not read from the ${field.side} screenshot; check this value`;
+        unread.push(`${field.label} ${field.side.toUpperCase()}`);
+      }
+      input.classList.toggle("needs-check", !ok);
     }
+    anvilCountStatus.textContent = unread.length === 0 ? "ALL READ" : `CHECK ${unread.join(", ")}`;
     updateManualValues();
   }
 
@@ -894,7 +907,7 @@ async function initialize(): Promise<void> {
         toPixelRect(afterRects.stats, afterImage.width, afterImage.height),
         recognize,
       );
-      await updateAnvilCountFromScreenshots(worker);
+      await updateBarValuesFromScreenshots(worker);
 
       const fallbackThreshold = Number(visionConfidenceControl.value) / 100;
       const tasks: VisionTask[] = [
@@ -1105,7 +1118,10 @@ async function initialize(): Promise<void> {
   });
 
   for (const input of app.querySelectorAll<HTMLInputElement>(".manual-table input")) {
-    input.addEventListener("input", updateManualValues);
+    input.addEventListener("input", () => {
+      input.classList.remove("needs-check");
+      updateManualValues();
+    });
   }
 
   for (const background of config.backgrounds) {

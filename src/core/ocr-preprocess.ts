@@ -6,6 +6,13 @@ export interface PreprocessOptions {
   padding?: number;
   /** Split a "514 | 40%" value into its two halves. */
   compound?: boolean;
+  /** Largest gap kept inside the text, in text heights. Raise it for text with spaces. */
+  wordGap?: number;
+  /**
+   * What makes a pixel "text". "luminance" suits the stat panel's white and gold text on dark;
+   * "white" (the weakest of R, G, B) suits white text on a saturated bar such as health.
+   */
+  textSignal?: "luminance" | "white";
 }
 
 function otsuThreshold(values: Float32Array): number {
@@ -91,20 +98,28 @@ export function preprocessValueRegion(
   options: PreprocessOptions = {},
 ): PixelImage[] {
   const { targetTextHeight = 36, padding = 12, compound = false } = options;
+  const wordGap = options.wordGap ?? (compound ? 2.2 : 0.9);
   const crop = cropPixels(source, region);
   const { width, height } = crop;
+  const white = options.textSignal === "white";
   const luminance = new Float32Array(width * height);
   for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) luminance[y * width + x] = pixelLuminance(crop, x, y);
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      luminance[y * width + x] = white
+        ? Math.min(crop.data[index]!, crop.data[index + 1]!, crop.data[index + 2]!)
+        : pixelLuminance(crop, x, y);
+    }
   }
   const threshold = Math.max(110, otsuThreshold(luminance));
   const mask = new Uint8Array(width * height);
   for (let i = 0; i < mask.length; i += 1) {
     // Stat text is white, grey or gold, never green; this keeps the anvil icon out of its count.
+    // (The "white" signal already rejects green, and its anti-aliased edges are green-tinted.)
     const red = crop.data[i * 4]!;
     const green = crop.data[i * 4 + 1]!;
     const blue = crop.data[i * 4 + 2]!;
-    const isGreen = green > red * 1.15 && green > blue * 1.15;
+    const isGreen = !white && green > red * 1.15 && green > blue * 1.15;
     mask[i] = luminance[i]! > threshold && !isGreen ? 1 : 0;
   }
 
@@ -127,7 +142,7 @@ export function preprocessValueRegion(
 
   // Keep the leftmost horizontal run; a wide gap means we've left the number.
   // Compound values have a wider gap around the separator, so allow more there.
-  const maxGap = textHeight * (compound ? 2.2 : 0.9);
+  const maxGap = textHeight * wordGap;
   const run: Component[] = [glyphs[0]!];
   for (const glyph of glyphs.slice(1)) {
     if (glyph.minX - Math.max(...run.map((component) => component.maxX)) > maxGap) break;

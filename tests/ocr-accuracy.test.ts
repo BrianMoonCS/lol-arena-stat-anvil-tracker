@@ -4,7 +4,15 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createWorker, OEM, PSM } from "tesseract.js";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { extractPanelStats, parseAnvilCount, readValueRegion, type PixelRecognizer } from "../src/core/ocr-layout";
+import { STAT_CHARACTERS } from "../src/core/ocr-engine";
+import {
+  extractPanelStats,
+  HEALTH_CHARACTERS,
+  parseAnvilCount,
+  readHealth,
+  readValueRegion,
+  type PixelRecognizer,
+} from "../src/core/ocr-layout";
 import { GROUND_TRUTH, loadExamplePair, type Side } from "./support/fixtures";
 import { encodePng } from "./support/png";
 
@@ -28,22 +36,28 @@ afterAll(async () => {
   await worker?.terminate();
 });
 
-const recognize: PixelRecognizer = async (image) => {
+// Reads in this test are sequential, so switching the character set per call is safe.
+const recognizeWith = (characters: string): PixelRecognizer => async (image) => {
+  await worker.setParameters({ tessedit_char_whitelist: characters });
   const { data } = await worker.recognize(encodePng(image), {}, { text: true, blocks: true });
   return { value: data.text, confidence: data.confidence / 100 };
 };
+const recognize = recognizeWith(STAT_CHARACTERS);
 
-it("reads every stat and anvil count in the example screenshots exactly", async () => {
+it("reads every stat, anvil count and max health in the example screenshots exactly", async () => {
   const pair = loadExamplePair();
   const lines: string[] = [];
   const misses: string[] = [];
   for (const side of ["before", "after"] as Side[]) {
-    const { image, panel, anvilValue } = pair[side];
+    const { image, panel, anvilValue, health: healthRect } = pair[side];
     const stats = await extractPanelStats(image, panel, recognize);
     const anvil = await readValueRegion(image, anvilValue, recognize);
+    const health = await readHealth(image, healthRect, recognizeWith(HEALTH_CHARACTERS))
+      ?? { value: "(unparsed)", confidence: 0 };
     const readings = [
       ...stats.map((stat) => ({ id: stat.id, ...stat, expected: GROUND_TRUTH[side].stats[stat.id]! })),
       { id: "anvilCount", ...anvil, expected: GROUND_TRUTH[side].anvilCount },
+      { id: "health", ...health, expected: GROUND_TRUTH[side].health },
     ];
     for (const { id, value, confidence, expected } of readings) {
       const ok = value === expected;

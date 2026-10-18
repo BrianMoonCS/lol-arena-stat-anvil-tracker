@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { it } from "vitest";
 import { getPanelValueRegions } from "../src/core/ocr-layout";
+import { preprocessValueRegion } from "../src/core/ocr-preprocess";
 import { cropPixels, resizeBilinear } from "../src/core/pixels";
 import { loadExamplePair } from "./support/fixtures";
 import { writePng } from "./support/png";
@@ -21,6 +22,10 @@ it.skipIf(!dumpDir)("dumps panel and value crops", () => {
       const crop = cropPixels(panelPixels, region);
       writePng(join(dumpDir!, `${side}-${region.id}.png`), resizeBilinear(crop, crop.width * 6, crop.height * 6));
     }
+    const healthCrop = cropPixels(image, health);
+    writePng(join(dumpDir!, `${side}-health.png`), resizeBilinear(healthCrop, healthCrop.width * 3, healthCrop.height * 3));
+    const [healthText] = preprocessValueRegion(image, health, { wordGap: 2.5, textSignal: "white" });
+    writePng(join(dumpDir!, `${side}-health-preprocessed.png`), healthText!);
     const anvil = cropPixels(image, anvilValue);
     writePng(join(dumpDir!, `${side}-anvil.png`), resizeBilinear(anvil, anvil.width * 6, anvil.height * 6));
   }

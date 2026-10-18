@@ -3,6 +3,7 @@ import {
   getPanelValueRegions,
   normalizeOcrText,
   parseAnvilCount,
+  parseHealth,
   PANEL_STAT_CELLS,
 } from "./ocr-layout";
 
@@ -59,5 +60,13 @@ describe("OCR value normalization", () => {
     });
     expect(parseAnvilCount({ value: "1?", confidence: 0.9 })).toBeUndefined();
     expect(parseAnvilCount({ value: "16", confidence: 0.4 })).toBeUndefined();
+  });
+
+  it("takes max health from \"current / max\" and rejects anything else", () => {
+    expect(parseHealth({ value: "2870 / 3160\n", confidence: 0.5 })).toEqual({ value: "3160", confidence: 0.5 });
+    expect(parseHealth({ value: "3160/3160", confidence: 0.4 })?.value).toBe("3160");
+    expect(parseHealth({ value: "3160", confidence: 0.9 })).toBeUndefined();
+    expect(parseHealth({ value: "3160/316", confidence: 0.9 })).toBeUndefined();
+    expect(parseHealth({ value: "31/60/3160", confidence: 0.9 })).toBeUndefined();
   });
 });

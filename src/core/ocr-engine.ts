@@ -31,21 +31,42 @@ export async function createLocalOcrWorker(
 
   await worker.setParameters({
     tessedit_pageseg_mode: PSM.SINGLE_LINE,
-    tessedit_char_whitelist: "0123456789.%|",
+    tessedit_char_whitelist: STAT_CHARACTERS,
     preserve_interword_spaces: "1",
   });
+  workerCharacters.set(worker, STAT_CHARACTERS);
   return worker;
 }
 
-export async function recognizeOcrPixels(
+/** Characters that can appear in stat panel values. */
+export const STAT_CHARACTERS = "0123456789.%|";
+
+const workerCharacters = new WeakMap<LocalOcrWorker, string>();
+const workerQueues = new WeakMap<LocalOcrWorker, Promise<unknown>>();
+
+/**
+ * Reads an image restricted to `characters`. Reads on one worker run strictly in turn so a
+ * character-set change for one read can never apply to another read already in flight.
+ */
+export function recognizeOcrPixels(
   worker: LocalOcrWorker,
   image: PixelImage,
+  characters = STAT_CHARACTERS,
 ): Promise<OcrReading> {
-  const canvas = document.createElement("canvas");
-  canvas.width = image.width;
-  canvas.height = image.height;
-  canvas.getContext("2d")?.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
-  return recognizeOcrCanvas(worker, canvas);
+  const run = async () => {
+    if (workerCharacters.get(worker) !== characters) {
+      await worker.setParameters({ tessedit_char_whitelist: characters });
+      workerCharacters.set(worker, characters);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    canvas.getContext("2d")?.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
+    return recognizeOcrCanvas(worker, canvas);
+  };
+  const result = (workerQueues.get(worker) ?? Promise.resolve()).then(run, run);
+  workerQueues.set(worker, result.catch(() => undefined));
+  return result;
 }
 
 export async function recognizeOcrCanvas(

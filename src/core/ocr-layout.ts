@@ -145,7 +145,30 @@ export function parseAnvilCount(
   return { value, confidence: reading.confidence };
 }
 
+/** Characters in the health bar text, e.g. "2870 / 3160". */
+export const HEALTH_CHARACTERS = "0123456789/";
+
+/**
+ * Parses health bar text into max health, the stat being tracked (current health drops
+ * with damage). Rejects anything that isn't exactly "current / max" with current <= max.
+ */
+export function parseHealth(reading: RecognizedText): RecognizedText | undefined {
+  const match = /^(\d{1,5})\/(\d{1,5})$/.exec(reading.value.replace(/\s/g, ""));
+  if (!match || Number(match[1]) > Number(match[2])) return undefined;
+  return { value: match[2]!, confidence: reading.confidence };
+}
+
 export type PixelRecognizer = (image: PixelImage) => Promise<RecognizedText>;
+
+/** Reads max health from the health bar crop. `recognize` must allow HEALTH_CHARACTERS. */
+export async function readHealth(
+  source: PixelImage,
+  region: PixelRect,
+  recognize: PixelRecognizer,
+): Promise<RecognizedText | undefined> {
+  const [text] = preprocessValueRegion(source, region, { wordGap: 2.5, textSignal: "white" });
+  return parseHealth(await recognize(text!));
+}
 
 /** Reads one value box: isolates its text, reads each part, and rejoins compound halves with "|". */
 export async function readValueRegion(
