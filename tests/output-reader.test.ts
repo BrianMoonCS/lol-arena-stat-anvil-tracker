@@ -15,13 +15,13 @@ const load = (sample: number) =>
   readPng(fileURLToPath(new URL(`./fixtures/output-sample-${sample}.png`, import.meta.url)));
 
 const SAMPLES: Array<[number, Record<string, string>]> = [
-  [1, { healAndShieldPower: "0%", armorPenetration: "0|0%", magicPenetration: "30|0%", omnivamp: "30%", tenacity: "0%" }],
-  [2, { healAndShieldPower: "0%", armorPenetration: "0|0%", magicPenetration: "34|0%", omnivamp: "34%", tenacity: "0%" }],
-  [3, { healAndShieldPower: "0%", armorPenetration: "0|0%", magicPenetration: "81|0%", omnivamp: "81%", tenacity: "0%" }],
-  [4, { healAndShieldPower: "0%", armorPenetration: "32|23%", magicPenetration: "0|0%", omnivamp: "9%", tenacity: "0%" }],
+  [1, { healAndShieldPower: "0%", armorPenetration: "0|0%", magicPenetration: "30|0%", omnivamp: "30%", tenacity: "0%", fortune: "2000", shard: "100%" }],
+  [2, { healAndShieldPower: "0%", armorPenetration: "0|0%", magicPenetration: "34|0%", omnivamp: "34%", tenacity: "0%", fortune: "4000", shard: "124%" }],
+  [3, { healAndShieldPower: "0%", armorPenetration: "0|0%", magicPenetration: "81|0%", omnivamp: "81%", tenacity: "0%", fortune: "15300", shard: "269%" }],
+  [4, { healAndShieldPower: "0%", armorPenetration: "32|23%", magicPenetration: "0|0%", omnivamp: "9%", tenacity: "0%", fortune: "0", shard: "0%" }],
 ];
 
-it.each(SAMPLES)("reads the top-panel stats off sample output %i", (sample, expected) => {
+it.each(SAMPLES)("reads the top-panel stats, Fortune and Shard off sample output %i", (sample, expected) => {
   expect(readOutputValues(load(sample), config.layout, config.output.cardScale)).toEqual(expected);
 });
 

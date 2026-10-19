@@ -16,6 +16,9 @@ export const TOP_PANEL_STATS = [
   "tenacity",
 ] as const;
 
+/** What a collapsed Before takes from the previous output: the hidden stats, Fortune and Shard. */
+export const PREVIOUS_OUTPUT_STATS = [...TOP_PANEL_STATS, "fortune", "shard"] as const;
+
 const COMPOUND_STATS = new Set(["armorPenetration", "magicPenetration"]);
 
 /**
@@ -59,7 +62,10 @@ interface Mask {
   height: number;
 }
 
-/** White fill of the value text in `region`; deltas are colored and the outline is black. */
+/**
+ * White fill of the value text in `region`; deltas are colored and the outline is black. Only
+ * neutral white counts: the top of shard's purple gradient delta is nearly white too.
+ */
 function fillMask(image: PixelImage, region: PixelRect): Mask {
   const left = Math.max(0, Math.round(region.x));
   const top = Math.max(0, Math.round(region.y));
@@ -69,8 +75,11 @@ function fillMask(image: PixelImage, region: PixelRect): Mask {
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const index = ((top + y) * image.width + left + x) * 4;
-      const white = image.data[index + 3]! >= 200 &&
-        Math.min(image.data[index]!, image.data[index + 1]!, image.data[index + 2]!) >= 170;
+      const red = image.data[index]!;
+      const green = image.data[index + 1]!;
+      const blue = image.data[index + 2]!;
+      const white = image.data[index + 3]! >= 200 && Math.min(red, green, blue) >= 170 &&
+        Math.max(red, green, blue) - Math.min(red, green, blue) <= 30;
       mask[y * width + x] = white ? 1 : 0;
     }
   }
@@ -186,12 +195,14 @@ export function readOutputValues(
   image: PixelImage,
   layout: SlotLayout[],
   cardScale: number,
-  ids: readonly string[] = TOP_PANEL_STATS,
+  ids: readonly string[] = PREVIOUS_OUTPUT_STATS,
 ): Record<string, string> {
   const card = findOutputCard(image, cardScale);
   const values: Record<string, string> = {};
   for (const id of ids) {
-    const slot = layout.find((candidate) => candidate.id === id);
+    // Shard shares the anvil line: "<shard>% | <count>", or just "<count>" while shard is 0%.
+    const slotId = id === "shard" ? "anvilCount" : id;
+    const slot = layout.find((candidate) => candidate.id === slotId);
     if (!slot) continue;
     const size = slot.size * card.height;
     let value = readValueText(image, {
@@ -201,6 +212,7 @@ export function readOutputValues(
       height: size * 1.2,
     });
     if (value === "") continue;
+    if (id === "shard") value = value.includes("|") ? value.split("|")[0]! : "0%";
     if (COMPOUND_STATS.has(id) && !value.includes("|")) value = `${value}|0%`;
     values[id] = normalizeStatInput(id, value);
   }

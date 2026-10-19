@@ -1117,30 +1117,51 @@ async function initialize(): Promise<void> {
 
   // ---------- Review table ----------
 
-  /** Puts the previous output's values into Before stats the screenshot doesn't show. */
+  /**
+   * When the Before panel is collapsed, puts the previous output's values into the Before
+   * stats the screenshot doesn't show, and into Before Fortune and Shard (the previous sheet's
+   * After values), unless those were typed this session.
+   */
   function fillFromPrevious(): void {
+    let collapsed = false;
     for (const id of TOP_PANEL_STATS) {
       const reading = readings.get(id);
-      if (!reading?.before.hidden || reading.before.edited) continue;
+      if (!reading?.before.hidden) continue;
+      collapsed = true;
+      if (reading.before.edited) continue;
       const value = previousForPair?.values[id] ?? "";
       reading.before = value
         ? { value, confidence: 1, hidden: true, fromPrevious: true }
         : { value: "", confidence: 0, hidden: true };
     }
+    if (collapsed) {
+      for (const id of ["fortune", "shard"]) {
+        const reading = readings.get(id);
+        const value = previousForPair?.values[id];
+        if (!reading || manualConfirmed[id]?.before || !value) continue;
+        reading.before = { value, confidence: 1, fromPrevious: true };
+      }
+    }
     updatePreviousOutputBar();
   }
+
+  /** "A", "A and B", "A, B and C". */
+  const listOf = (items: string[]) =>
+    items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 
   function updatePreviousOutputBar(): void {
     const hidden = TOP_PANEL_STATS.filter((id) => readings.get(id)?.before.hidden);
     previousOutputBar.hidden = hidden.length === 0;
     if (hidden.length === 0) return;
     const filled = hidden.filter((id) => readings.get(id)?.before.fromPrevious).length;
+    const filledManual = ["Fortune", "Shard"].filter((label) => readings.get(label.toLowerCase())?.before.fromPrevious);
     previousOutputPreview.hidden = !(previousImageUrl && filled > 0);
     if (previousForPair && filled > 0) {
       const when = new Date(previousForPair.savedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
       const how = previousForPair.source === "upload" ? "uploaded PNG" : "last output";
       previousOutputMessage.textContent =
-        `The Before stat panel is collapsed. Its top stats are filled in blue from your ${how} (${when}).`;
+        `The Before stat panel is collapsed. ${listOf(["Its top stats", ...filledManual])} ` +
+        `are filled in blue from your ${how} (${when}).`;
       previousOutputButton.textContent = "Use a different PNG";
     } else {
       previousOutputMessage.textContent =
@@ -1272,7 +1293,9 @@ async function initialize(): Promise<void> {
           input.title = reading[side].edited
             ? "Edited by you"
             : reading[side].fromPrevious
-              ? `Not in the ${side} screenshot (stat panel collapsed); filled from your previous output`
+              ? reading[side].hidden
+                ? `Not in the ${side} screenshot (stat panel collapsed); filled from your previous output`
+                : "Filled from your previous output (its After value)"
             : reading[side].remembered
               ? "Remembered from last time; check it's still right"
             : state === "missing"
