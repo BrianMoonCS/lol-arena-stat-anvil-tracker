@@ -26,7 +26,7 @@ beforeAll(async () => {
     cacheMethod: "none",
   });
   await worker.setParameters({
-    tessedit_pageseg_mode: PSM.SINGLE_LINE,
+    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
     tessedit_char_whitelist: "0123456789.%|",
     preserve_interword_spaces: "1",
   });

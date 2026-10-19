@@ -30,7 +30,7 @@ export async function createLocalOcrWorker(
   });
 
   await worker.setParameters({
-    tessedit_pageseg_mode: PSM.SINGLE_LINE,
+    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
     tessedit_char_whitelist: STAT_CHARACTERS,
     preserve_interword_spaces: "1",
   });

@@ -1,4 +1,4 @@
-import { preprocessValueRegion } from "./ocr-preprocess";
+import { preprocessValueRegion, type PreprocessOptions } from "./ocr-preprocess";
 import { cropPixels, pixelLuminance, type PixelImage, type PixelRect } from "./pixels";
 
 export interface RecognizedText {
@@ -312,8 +312,9 @@ export async function readValueRegion(
   region: PixelRect,
   recognize: PixelRecognizer,
   compound = false,
+  options: PreprocessOptions = {},
 ): Promise<RecognizedText> {
-  const parts = preprocessValueRegion(source, region, { compound });
+  const parts = preprocessValueRegion(source, region, { ...options, compound });
   const readings: RecognizedText[] = [];
   // One Tesseract worker handles one image at a time, so read the parts in order.
   for (const part of parts) readings.push(await recognize(part));
@@ -345,7 +346,7 @@ export async function extractPanelStats(
       results.push({ id, value: "", confidence: 0, visible: false });
       continue;
     }
-    const reading = await readValueRegion(image, box, recognize, COMPOUND_STATS.has(id));
+    const reading = await readValueRegion(image, box, recognize, COMPOUND_STATS.has(id), { dropEdgeShapes: true });
     results.push({ id, ...reading, visible: true });
   }
   return results;

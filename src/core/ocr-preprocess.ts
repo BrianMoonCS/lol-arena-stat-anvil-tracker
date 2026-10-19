@@ -13,6 +13,11 @@ export interface PreprocessOptions {
    * "white" (the weakest of R, G, B) suits white text on a saturated bar such as health.
    */
   textSignal?: "luminance" | "white";
+  /**
+   * Drop shapes touching any edge of the box (the portrait ring and its frame poke into stat
+   * panel boxes; values sit inside their padded box), then re-threshold without them.
+   */
+  dropEdgeShapes?: boolean;
 }
 
 function otsuThreshold(values: Float32Array): number {
@@ -111,19 +116,46 @@ export function preprocessValueRegion(
         : pixelLuminance(crop, x, y);
     }
   }
-  const threshold = Math.max(110, otsuThreshold(luminance));
-  const mask = new Uint8Array(width * height);
-  for (let i = 0; i < mask.length; i += 1) {
-    // Stat text is white, grey or gold, never green; this keeps the anvil icon out of its count.
-    // (The "white" signal already rejects green, and its anti-aliased edges are green-tinted.)
-    const red = crop.data[i * 4]!;
-    const green = crop.data[i * 4 + 1]!;
-    const blue = crop.data[i * 4 + 2]!;
-    const isGreen = !white && green > red * 1.15 && green > blue * 1.15;
-    mask[i] = luminance[i]! > threshold && !isGreen ? 1 : 0;
-  }
+  const excluded = new Uint8Array(width * height);
+  const buildMask = () => {
+    const kept = luminance.filter((_, index) => !excluded[index]);
+    const threshold = Math.max(110, otsuThreshold(kept.length > 0 ? kept : luminance));
+    const mask = new Uint8Array(width * height);
+    for (let i = 0; i < mask.length; i += 1) {
+      // Stat text is white, grey or gold, never green; this keeps the anvil icon out of its count.
+      // (The "white" signal already rejects green, and its anti-aliased edges are green-tinted.)
+      const red = crop.data[i * 4]!;
+      const green = crop.data[i * 4 + 1]!;
+      const blue = crop.data[i * 4 + 2]!;
+      const isGreen = !white && green > red * 1.15 && green > blue * 1.15;
+      mask[i] = !excluded[i] && luminance[i]! > threshold && !isGreen ? 1 : 0;
+    }
+    return { mask, threshold };
+  };
+  const touchesSide = (component: Component) =>
+    component.minX === 0 || component.maxX === width - 1 || component.minY === 0 || component.maxY === height - 1;
 
-  const allComponents = connectedComponents(mask, width, height);
+  let { mask, threshold } = buildMask();
+  let allComponents = connectedComponents(mask, width, height);
+  if (options.dropEdgeShapes && allComponents.some(touchesSide)) {
+    // Exclude the edge shapes and a pixel around them (their soft edges), then threshold again:
+    // a bright ring would otherwise push a dim grey "0" below the cut-off.
+    for (const component of allComponents.filter(touchesSide)) {
+      for (const pixel of component.pixels) {
+        const x = pixel % width;
+        const y = (pixel - x) / width;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height) excluded[ny * width + nx] = 1;
+          }
+        }
+      }
+    }
+    ({ mask, threshold } = buildMask());
+    allComponents = connectedComponents(mask, width, height).filter((component) => !touchesSide(component));
+  }
   const heightOf = (component: Component) => component.maxY - component.minY + 1;
   const widthOf = (component: Component) => component.maxX - component.minX + 1;
   const components = allComponents.filter((component) =>

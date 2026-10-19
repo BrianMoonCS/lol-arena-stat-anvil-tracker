@@ -113,6 +113,47 @@ export const EXAMPLE_PAIRS: ExamplePair[] = [
       },
     },
   },
+  {
+    // AP "0" was read as "4" and MR came back with low confidence on these.
+    name: "AP 0 and MR",
+    files: { before: "ap-mr-before.png", after: "ap-mr-after.png" },
+    truth: {
+      after: {
+        stats: {
+          healAndShieldPower: "0%",
+          armorPenetration: "15|0%",
+          magicPenetration: "0|0%",
+          omnivamp: "0%",
+          tenacity: "0%",
+          attackDamage: "84",
+          abilityPower: "0",
+          armor: "135",
+          magicResistance: "116",
+          attackSpeed: "1.08",
+          abilityHaste: "158",
+          criticalStrikeChance: "0%",
+          movementSpeed: "577",
+        },
+        anvilCount: "10",
+        health: "2775",
+      },
+      before: {
+        stats: {
+          ...HIDDEN_TOP_HALF,
+          attackDamage: "84",
+          abilityPower: "0",
+          armor: "145",
+          magicResistance: "126",
+          attackSpeed: "1.08",
+          abilityHaste: "158",
+          criticalStrikeChance: "0%",
+          movementSpeed: "536",
+        },
+        anvilCount: "10",
+        health: "2775",
+      },
+    },
+  },
 ];
 
 export interface LoadedScreenshot {
