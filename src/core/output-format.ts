@@ -82,14 +82,22 @@ function normalizePair(id: string, pair: StatPair): StatPair {
   return { before: normalizeStatInput(id, pair.before), after: normalizeStatInput(id, pair.after) };
 }
 
-function valueWithDelta(pair: StatPair, color: DeltaColor, fixedDecimals?: number, zero = "0"): TextRun[] {
-  const runs: TextRun[] = [{ text: formatValue(pair.after || zero, fixedDecimals) }];
+function valueWithDelta(
+  pair: StatPair,
+  color: DeltaColor,
+  fixedDecimals?: number,
+  zero = "0",
+  prefix = "",
+): TextRun[] {
+  const runs: TextRun[] = [{ text: prefix + formatValue(pair.after || zero, fixedDecimals) }];
   const delta = formatDelta(pair.before, pair.after, fixedDecimals);
   if (delta) runs.push({ text: " " }, { text: delta, color });
   return runs;
 }
 
-const SEPARATOR: TextRun = { text: " | " };
+/** "|" belongs to the piece after it ("| 23%"), as in the reference Resolve template. */
+const SEPARATOR_PREFIX = "| ";
+const GAP: TextRun = { text: " " };
 
 /**
  * Builds the text runs for one output slot.
@@ -110,7 +118,7 @@ export function buildSlotRuns(
     const runs = valueWithDelta({ before: flatBefore, after: flatAfter }, color);
     const percent = { before: withPercent(percentBefore), after: withPercent(percentAfter) };
     if (!(isZero(percent.after) && formatDelta(percent.before, percent.after) === undefined)) {
-      runs.push(SEPARATOR, ...valueWithDelta({ before: percent.before, after: percent.after || "0%" }, color));
+      runs.push(GAP, ...valueWithDelta(percent, color, undefined, "0%", SEPARATOR_PREFIX));
     }
     return runs;
   }
@@ -119,9 +127,9 @@ export function buildSlotRuns(
     const runs: TextRun[] = [];
     const shardPair = normalizePair("shard", values.shard ?? { before: "", after: "" });
     if (shardPair.after !== "" && !isZero(shardPair.after)) {
-      runs.push(...valueWithDelta(shardPair, colors.shard ?? DELTA_PRESETS.purple), SEPARATOR);
+      runs.push(...valueWithDelta(shardPair, colors.shard ?? DELTA_PRESETS.purple), GAP);
     }
-    runs.push(...valueWithDelta(pair, color));
+    runs.push(...valueWithDelta(pair, color, undefined, "0", runs.length > 0 ? SEPARATOR_PREFIX : ""));
     return runs;
   }
 
