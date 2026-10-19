@@ -477,31 +477,68 @@ export function detectAnvilCounter(
 }
 
 /**
- * Finds the stat panel: its left border from the gold frame, then its rows and top/bottom
- * borders from the text (see locatePanel). Handles borders cut off by the screenshot and a
- * collapsed top half; falls back to the border-only detection when no rows are found.
+ * Columns that look like the panel's gold left border: the longest vertical runs of gold or
+ * white pixels in the left half of the image, leftmost first.
+ */
+function goldBorderCandidates(image: ImageData): number[] {
+  const runs: number[] = [];
+  for (let x = 0; x < Math.floor(image.width * 0.5); x += 1) {
+    let run = 0;
+    let longest = 0;
+    for (let y = 0; y < image.height; y += 1) {
+      const index = (y * image.width + x) * 4;
+      const red = image.data[index]!;
+      const green = image.data[index + 1]!;
+      const blue = image.data[index + 2]!;
+      const isGold = red > 85 && green > 60 && red > green * 1.02 && green > blue * 1.04;
+      const isWhite = red > 165 && green > 155 && blue > 135;
+      run = isGold || isWhite ? run + 1 : 0;
+      longest = Math.max(longest, run);
+    }
+    runs.push(longest);
+  }
+  const strongest = Math.max(0, ...runs);
+  const candidates: number[] = [];
+  runs.forEach((run, x) => {
+    if (run < Math.max(15, strongest * 0.4)) return;
+    if (candidates.length > 0 && x - candidates[candidates.length - 1]! <= 3) return;
+    candidates.push(x);
+  });
+  return candidates;
+}
+
+/** Panel widths to try when nothing else gives the scale; the rows then give the real width. */
+const PANEL_WIDTH_GUESSES = [110, 150, 190, 240, 300, 380];
+
+/**
+ * Finds the stat panel. First tries the left-edge detector (good for tight crops of the HUD);
+ * when that fails, as with a short collapsed panel surrounded by game scene, tries each gold
+ * vertical line as the left border. Either way the rows, scale and top/bottom borders come from
+ * the text (see locatePanel), which handles cut-off borders and a collapsed top half.
  */
 export function detectStatPanel(image: ImageData): CropDetection {
   const window = detectStatWindow(image);
-  if (!window.edges) return window;
-  const location = locatePanel(image, {
-    x: window.edges.left,
-    y: 0,
-    width: window.edges.right - window.edges.left,
-    height: image.height,
-  });
-  if (!location) return window;
-  const { rect } = location;
-  return {
-    rect: clampCropRect({
-      x: rect.x / image.width,
-      y: rect.y / image.height,
-      width: rect.width / image.width,
-      height: rect.height / image.height,
-    }),
-    // Four evenly spaced text rows at the panel's scale are strong evidence on their own.
-    confidence: Math.max(window.confidence, 0.85),
-    method: location.collapsed ? "collapsed-panel" : "left-panel",
-    edges: { left: rect.x, right: rect.x + rect.width, top: rect.y, bottom: rect.y + rect.height },
-  };
+  const attempts: Array<{ left: number; width: number }> = [];
+  if (window.edges) attempts.push({ left: window.edges.left, width: window.edges.right - window.edges.left });
+  for (const left of goldBorderCandidates(image)) {
+    for (const width of PANEL_WIDTH_GUESSES) attempts.push({ left: Math.max(0, left - 1), width });
+  }
+  for (const { left, width } of attempts) {
+    const location = locatePanel(image, { x: left, y: 0, width, height: image.height });
+    if (!location) continue;
+    const { rect } = location;
+    return {
+      rect: clampCropRect({
+        x: rect.x / image.width,
+        y: rect.y / image.height,
+        width: rect.width / image.width,
+        height: rect.height / image.height,
+      }),
+      // Four evenly spaced text rows at the panel's scale are strong evidence on their own.
+      confidence: Math.max(window.confidence, 0.85),
+      method: location.collapsed ? "collapsed-panel" : "left-panel",
+      edges: { left: rect.x, right: rect.x + rect.width, top: rect.y, bottom: rect.y + rect.height },
+    };
+  }
+  return window;
 }

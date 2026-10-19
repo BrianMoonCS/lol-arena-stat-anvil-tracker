@@ -34,7 +34,7 @@ describe("fixed stat panel layout", () => {
       id: "healAndShieldPower",
       x: 489,
       y: 12,
-      width: 267,
+      width: 229,
       height: 97,
     });
     expect(regions.find(({ id }) => id === "attackDamage")).toEqual({

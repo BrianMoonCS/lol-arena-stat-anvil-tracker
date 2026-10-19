@@ -20,23 +20,24 @@ export interface PanelValueRegion {
   height: number;
 }
 
+// Right-column boxes stop at 94% of the panel width so the panel's light right border stays out.
 const VALUE_BOXES: Record<string, Omit<PanelValueRegion, "id" | "width" | "height"> & {
   width: number;
   height: number;
 }> = {
-  healAndShieldPower: { x: 0.64, y: 0.012, width: 0.35, height: 0.095 },
+  healAndShieldPower: { x: 0.64, y: 0.012, width: 0.3, height: 0.095 },
   armorPenetration: { x: 0.18, y: 0.125, width: 0.35, height: 0.095 },
-  magicPenetration: { x: 0.64, y: 0.125, width: 0.35, height: 0.095 },
-  omnivamp: { x: 0.64, y: 0.238, width: 0.35, height: 0.095 },
-  tenacity: { x: 0.64, y: 0.352, width: 0.35, height: 0.095 },
+  magicPenetration: { x: 0.64, y: 0.125, width: 0.3, height: 0.095 },
+  omnivamp: { x: 0.64, y: 0.238, width: 0.3, height: 0.095 },
+  tenacity: { x: 0.64, y: 0.352, width: 0.3, height: 0.095 },
   attackDamage: { x: 0.18, y: 0.526, width: 0.35, height: 0.095 },
-  abilityPower: { x: 0.64, y: 0.526, width: 0.35, height: 0.095 },
+  abilityPower: { x: 0.64, y: 0.526, width: 0.3, height: 0.095 },
   armor: { x: 0.18, y: 0.636, width: 0.35, height: 0.095 },
-  magicResistance: { x: 0.64, y: 0.636, width: 0.35, height: 0.095 },
+  magicResistance: { x: 0.64, y: 0.636, width: 0.3, height: 0.095 },
   attackSpeed: { x: 0.18, y: 0.752, width: 0.35, height: 0.095 },
-  abilityHaste: { x: 0.64, y: 0.752, width: 0.35, height: 0.095 },
+  abilityHaste: { x: 0.64, y: 0.752, width: 0.3, height: 0.095 },
   criticalStrikeChance: { x: 0.18, y: 0.868, width: 0.35, height: 0.095 },
-  movementSpeed: { x: 0.64, y: 0.868, width: 0.35, height: 0.095 },
+  movementSpeed: { x: 0.64, y: 0.868, width: 0.3, height: 0.095 },
 };
 
 export const PANEL_STAT_CELLS = [
