@@ -83,6 +83,10 @@ const TEXT_LUMINANCE = 140;
 const ROW_OFFSETS_IN_PITCH = [7.47, 6.47, 5.47, 4.47, 3, 2, 1, 0];
 /** Panel width (left border to right edge) in row pitches, measured on the example screenshots. */
 const PANEL_WIDTH_IN_PITCH = 6.75;
+/** Bottom border below the bottom row's center, and border-to-border panel heights, in pitches. */
+const BOTTOM_BORDER_IN_PITCH = 0.81;
+const FULL_HEIGHT_IN_PITCH = 9.07;
+const COLLAPSED_HEIGHT_IN_PITCH = 4.52;
 
 interface Band {
   top: number;
@@ -219,12 +223,17 @@ export function locatePanel(image: PixelImage, region: PixelRect): PanelLocation
     return band ? toRow(band) : row;
   });
 
-  // Borders: the strongest edge between the outermost row and about a pitch beyond it.
-  const firstCenter = rows.find(Boolean)!.center;
-  const topEdge = findBorder(image, left, right, Math.round(firstCenter - pitch * 0.45), Math.round(firstCenter - pitch * 1.1));
-  const bottomEdge = findBorder(image, left, right, Math.round(bottomCenter + pitch * 0.45), Math.round(bottomCenter + pitch * 1.1));
-  const rectTop = Math.max(0, topEdge ?? Math.round(firstCenter - pitch * 0.75));
-  const rectBottom = Math.min(image.height, bottomEdge ?? Math.round(bottomCenter + pitch * 0.75));
+  // Anchor at the bottom-left corner: the bottom border is found near where the layout puts it
+  // (or computed when the screenshot cuts it off), and the top follows from the panel's known
+  // height. Searching for the top edge instead is easily fooled by scene or overlapping windows.
+  const expectedBottom = bottomCenter + pitch * BOTTOM_BORDER_IN_PITCH;
+  const foundBottom = findBorder(image, left, right, Math.round(bottomCenter + pitch * 0.45), Math.round(bottomCenter + pitch * 1.1));
+  const bottomBorder = foundBottom !== undefined && Math.abs(foundBottom - expectedBottom) <= pitch * 0.25
+    ? foundBottom
+    : expectedBottom;
+  const panelHeight = pitch * (collapsed ? COLLAPSED_HEIGHT_IN_PITCH : FULL_HEIGHT_IN_PITCH);
+  const rectTop = Math.max(0, Math.round(bottomBorder - panelHeight));
+  const rectBottom = Math.min(image.height, Math.round(bottomBorder));
   return {
     left,
     width,
