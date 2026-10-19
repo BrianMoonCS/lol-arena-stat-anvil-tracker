@@ -24,6 +24,8 @@ export interface StatPair {
 
 /** Stats shown as "flat | percent"; each part gets its own delta. */
 const COMPOUND_STATS = new Set(["armorPenetration", "magicPenetration"]);
+/** Stats that are always percentages; a value typed without "%" gets one. */
+const PERCENT_STATS = new Set(["criticalStrikeChance", "omnivamp", "tenacity", "healAndShieldPower", "shard"]);
 /** Stats always shown with a fixed number of decimals, delta included ("3.64 (+0.50)"). */
 const FIXED_DECIMALS: Record<string, number> = { attackSpeed: 2 };
 
@@ -62,8 +64,26 @@ function withPercent(raw: string): string {
   return trimmed === "" || trimmed.endsWith("%") ? trimmed : `${trimmed}%`;
 }
 
-function valueWithDelta(pair: StatPair, color: DeltaColor, fixedDecimals?: number): TextRun[] {
-  const runs: TextRun[] = [{ text: formatValue(pair.after || "0", fixedDecimals) }];
+/**
+ * Adds a missing "%" where a stat requires one: "84" -> "84%" for percent stats, and
+ * "32|23" -> "32|23%" for the percent half of compound stats. Blank stays blank.
+ */
+export function normalizeStatInput(id: string, raw: string): string {
+  const trimmed = raw.trim();
+  if (PERCENT_STATS.has(id)) return withPercent(trimmed);
+  if (COMPOUND_STATS.has(id) && trimmed.includes("|")) {
+    const [flat = "", percent = ""] = trimmed.split("|");
+    return `${flat.trim()}|${withPercent(percent)}`;
+  }
+  return trimmed;
+}
+
+function normalizePair(id: string, pair: StatPair): StatPair {
+  return { before: normalizeStatInput(id, pair.before), after: normalizeStatInput(id, pair.after) };
+}
+
+function valueWithDelta(pair: StatPair, color: DeltaColor, fixedDecimals?: number, zero = "0"): TextRun[] {
+  const runs: TextRun[] = [{ text: formatValue(pair.after || zero, fixedDecimals) }];
   const delta = formatDelta(pair.before, pair.after, fixedDecimals);
   if (delta) runs.push({ text: " " }, { text: delta, color });
   return runs;
@@ -81,7 +101,7 @@ export function buildSlotRuns(
   values: Record<string, StatPair | undefined>,
   colors: Record<string, DeltaColor | undefined>,
 ): TextRun[] {
-  const pair = values[id] ?? { before: "", after: "" };
+  const pair = normalizePair(id, values[id] ?? { before: "", after: "" });
   const color = colors[id] ?? DELTA_PRESETS.green;
 
   if (COMPOUND_STATS.has(id)) {
@@ -97,8 +117,7 @@ export function buildSlotRuns(
 
   if (id === "anvilCount") {
     const runs: TextRun[] = [];
-    const shard = values.shard ?? { before: "", after: "" };
-    const shardPair = { before: withPercent(shard.before), after: withPercent(shard.after) };
+    const shardPair = normalizePair("shard", values.shard ?? { before: "", after: "" });
     if (shardPair.after !== "" && !isZero(shardPair.after)) {
       runs.push(...valueWithDelta(shardPair, colors.shard ?? DELTA_PRESETS.purple), SEPARATOR);
     }
@@ -106,12 +125,12 @@ export function buildSlotRuns(
     return runs;
   }
 
-  return valueWithDelta(pair, color, FIXED_DECIMALS[id]);
+  return valueWithDelta(pair, color, FIXED_DECIMALS[id], PERCENT_STATS.has(id) ? "0%" : "0");
 }
 
 /** The delta text alone, for the review table's Change column. */
-export function describeDelta(id: string, pair: StatPair): string {
-  if (id === "shard") return formatDelta(withPercent(pair.before), withPercent(pair.after)) ?? "";
+export function describeDelta(id: string, rawPair: StatPair): string {
+  const pair = normalizePair(id, rawPair);
   if (COMPOUND_STATS.has(id)) {
     const before = pair.before.split("|");
     const after = pair.after.split("|");

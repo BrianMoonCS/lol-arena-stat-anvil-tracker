@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSlotRuns, describeDelta, DELTA_PRESETS, type StatPair, type TextRun } from "./output-format";
+import { buildSlotRuns, describeDelta, DELTA_PRESETS, normalizeStatInput, type StatPair, type TextRun } from "./output-format";
 
 const text = (runs: TextRun[]) => runs.map((run) => run.text).join("");
 const line = (id: string, values: Record<string, StatPair>, colors = {}) => text(buildSlotRuns(id, values, colors));
@@ -54,6 +54,21 @@ describe("output formatting", () => {
     const red = buildSlotRuns("armor", { armor: { before: "1", after: "2" } }, { armor: DELTA_PRESETS.red });
     expect(red.find((run) => run.text === "(+1)")?.color).toEqual(DELTA_PRESETS.red);
     expect(red[0]?.color).toBeUndefined();
+  });
+
+  it("adds a missing % to percent stats, shard and the % half of compound stats", () => {
+    expect(normalizeStatInput("criticalStrikeChance", "84")).toBe("84%");
+    expect(normalizeStatInput("tenacity", "20%")).toBe("20%");
+    expect(normalizeStatInput("shard", "124")).toBe("124%");
+    expect(normalizeStatInput("armorPenetration", "32 | 23")).toBe("32|23%");
+    expect(normalizeStatInput("armorPenetration", "32")).toBe("32");
+    expect(normalizeStatInput("armor", "84")).toBe("84");
+    expect(normalizeStatInput("omnivamp", "")).toBe("");
+    expect(line("criticalStrikeChance", { criticalStrikeChance: { before: "0", after: "84" } })).toBe("84% (+84%)");
+    expect(line("omnivamp", { omnivamp: { before: "", after: "" } })).toBe("0%");
+    expect(line("armorPenetration", { armorPenetration: { before: "0|0", after: "32|23" } }))
+      .toBe("32 (+32) | 23% (+23%)");
+    expect(describeDelta("healAndShieldPower", { before: "12", after: "0" })).toBe("(-12%)");
   });
 
   it("describes deltas for the review table", () => {

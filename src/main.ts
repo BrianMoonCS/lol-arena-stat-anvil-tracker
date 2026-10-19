@@ -10,6 +10,7 @@ import {
   buildSlotRuns,
   DELTA_PRESETS,
   describeDelta,
+  normalizeStatInput,
   type DeltaColor,
   type StatPair,
   type TextRun,
@@ -1093,6 +1094,13 @@ async function initialize(): Promise<void> {
           updateChange();
           updateReviewStatus();
           draw();
+        });
+        // On leaving the field, show the "%" the output will add ("84" -> "84%").
+        input.addEventListener("change", () => {
+          const normalized = normalizeStatInput(id, input.value);
+          if (normalized === input.value.trim()) return;
+          input.value = normalized;
+          input.dispatchEvent(new Event("input"));
         });
         return input;
       });
