@@ -48,7 +48,8 @@ import {
   type VisionTask,
   type VisionResult,
 } from "./core/vision";
-import { readOutputValues, TOP_PANEL_STATS } from "./core/output-reader";
+import { readOutputSheet, TOP_PANEL_STATS } from "./core/output-reader";
+import { embedSheetMetadata, readSheetMetadata, type SheetMetadata } from "./core/png-metadata";
 import {
   deleteBackground,
   listStoredBackgrounds,
@@ -410,6 +411,32 @@ async function initialize(): Promise<void> {
       <label class="color-custom">Custom <input id="delta-color-custom" type="color" value="#00ff18" /></label>
     </div>
 
+    <section class="step" aria-labelledby="step-swap-title">
+      <div class="step-head">
+        <span class="step-number" aria-hidden="true">⇄</span>
+        <div class="step-titles">
+          <h2 id="step-swap-title">Swap background on a stat sheet</h2>
+          <p>Upload a finished stat sheet PNG; its values, changes and colours are redrawn on the background you pick.</p>
+        </div>
+        <div class="step-actions">
+          <label class="ghost-button file-button">
+            <input id="swap-file" type="file" accept="image/png,image/*" hidden />
+            <span>Upload stat sheet</span>
+          </label>
+        </div>
+      </div>
+      <p id="swap-message" class="disclosure-note" hidden></p>
+      <div id="swap-body" class="swap-body" hidden>
+        <div id="swap-backgrounds" class="background-picker" role="group" aria-label="Background for the swapped sheet"></div>
+        <div class="canvas-frame">
+          <canvas id="swap-canvas" aria-label="Stat sheet on the new background"></canvas>
+        </div>
+        <div class="output-actions">
+          <button id="swap-download" class="primary-button" type="button">Download PNG</button>
+        </div>
+      </div>
+    </section>
+
     <details class="disclosure advanced">
       <summary>Advanced: vision fallback</summary>
       <div class="vision-panel">
@@ -453,6 +480,12 @@ async function initialize(): Promise<void> {
     ].map((fraction) => `${fraction * 100}%`).join(" ");
   }
   const colorPopover = query<HTMLDivElement>(app, "#delta-color-popover");
+  const swapFile = query<HTMLInputElement>(app, "#swap-file");
+  const swapMessage = query<HTMLParagraphElement>(app, "#swap-message");
+  const swapBody = query<HTMLDivElement>(app, "#swap-body");
+  const swapBackgrounds = query<HTMLDivElement>(app, "#swap-backgrounds");
+  const swapCanvas = query<HTMLCanvasElement>(app, "#swap-canvas");
+  const swapDownload = query<HTMLButtonElement>(app, "#swap-download");
   const colorCustomInput = query<HTMLInputElement>(app, "#delta-color-custom");
   const downloadButton = query<HTMLButtonElement>(app, "#download-button");
   const sampleBadge = query<HTMLSpanElement>(app, "#sample-badge");
@@ -552,11 +585,22 @@ async function initialize(): Promise<void> {
   const deltaColorFor = (id: string): DeltaColor =>
     deltaColors[id] ?? (id === "shard" ? DELTA_PRESETS.purple : DELTA_PRESETS.green);
 
-  function currentLayout(): SlotLayout[] {
-    return layoutOverrides[selectedBackground.id] ?? config.layout;
+  const defaultDeltaColor = (id: string): DeltaColor => (id === "shard" ? DELTA_PRESETS.purple : DELTA_PRESETS.green);
+
+  function layoutFor(background: BackgroundEntry): SlotLayout[] {
+    return layoutOverrides[background.id] ?? config.layout;
   }
 
-  function outputLines(): Record<string, TextRun[]> {
+  function currentLayout(): SlotLayout[] {
+    return layoutFor(selectedBackground);
+  }
+
+  function linesFor(layout: SlotLayout[], values: Record<string, StatPair>, colors: Record<string, DeltaColor>): Record<string, TextRun[]> {
+    return Object.fromEntries(layout.map((slot) => [slot.id, buildSlotRuns(slot.id, values, colors)]));
+  }
+
+  /** The sheet as data: what is drawn, and what a downloaded PNG carries for later re-rendering. */
+  function currentSheet(): SheetMetadata {
     const values: Record<string, StatPair> = {};
     if (readings.size === 0) {
       Object.assign(values, SAMPLE_PAIRS);
@@ -564,7 +608,58 @@ async function initialize(): Promise<void> {
       for (const [id, reading] of readings) values[id] = { before: reading.before.value, after: reading.after.value };
     }
     const colors = Object.fromEntries(STATS.map(({ id }) => [id, deltaColorFor(id)]));
-    return Object.fromEntries(currentLayout().map((slot) => [slot.id, buildSlotRuns(slot.id, values, colors)]));
+    return { version: 1, values, colors };
+  }
+
+  function outputLines(): Record<string, TextRun[]> {
+    const { values, colors } = currentSheet();
+    return linesFor(currentLayout(), values, colors);
+  }
+
+  /** Downloads a canvas as PNG with the sheet's data embedded in the file. */
+  async function downloadSheet(canvas: HTMLCanvasElement, sheet: SheetMetadata, name: string): Promise<void> {
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return;
+    const png = embedSheetMetadata(new Uint8Array(await blob.arrayBuffer()), sheet);
+    const url = URL.createObjectURL(new Blob([png], { type: "image/png" }));
+    const link = document.createElement("a");
+    link.download = name;
+    link.href = url;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
+  /**
+   * Gets a stat sheet's data from a PNG: exact when it carries embedded data (downloaded from
+   * this tool), otherwise read off the image (older downloads, the Resolve template).
+   */
+  async function loadSheetFile(file: File): Promise<{ sheet: SheetMetadata; exact: boolean; image: HTMLImageElement } | string> {
+    const embedded = readSheetMetadata(new Uint8Array(await file.arrayBuffer()));
+    const url = URL.createObjectURL(file);
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("not an image"));
+        element.src = url;
+      });
+      if (embedded) return { sheet: embedded, exact: true, image };
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return "That image couldn't be read.";
+      context.drawImage(image, 0, 0);
+      const { values, colors } = readOutputSheet(
+        context.getImageData(0, 0, canvas.width, canvas.height), config.layout, config.output.cardScale,
+      );
+      if (Object.keys(values).length === 0) return "Couldn't find stat values in that image. Is it a stat sheet?";
+      return { sheet: { version: 1, values, colors }, exact: false, image };
+    } catch {
+      return "That file couldn't be opened as an image.";
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   function draw(): void {
@@ -628,6 +723,7 @@ async function initialize(): Promise<void> {
       }
       backgroundPicker.insertBefore(option, uploadTile);
     }
+    renderSwapPicker();
   }
 
   function uploadedBackgroundConfig(id: string, name: string, blob: Blob): BackgroundEntry {
@@ -795,10 +891,82 @@ async function initialize(): Promise<void> {
 
   downloadButton.addEventListener("click", () => {
     rememberOutput("download");
-    const link = document.createElement("a");
-    link.download = "stat-anvil-tracker.png";
-    link.href = outputCanvas.toDataURL("image/png");
-    link.click();
+    void downloadSheet(outputCanvas, currentSheet(), "stat-anvil-tracker.png");
+  });
+
+  // ---------- Swap background on an existing sheet ----------
+
+  let swapSheet: SheetMetadata | undefined;
+  let swapBackground = selectedBackground;
+  let swapImage: HTMLImageElement | undefined;
+
+  function drawSwap(): void {
+    if (!swapSheet) return;
+    const colors = Object.fromEntries(STATS.map(({ id }) => [id, swapSheet!.colors[id] ?? defaultDeltaColor(id)]));
+    renderOutput(swapCanvas, config, swapImage, layoutFor(swapBackground), linesFor(layoutFor(swapBackground), swapSheet.values, colors));
+  }
+
+  function chooseSwapBackground(background: BackgroundEntry): void {
+    swapBackground = background;
+    for (const option of swapBackgrounds.querySelectorAll<HTMLElement>(".background-option")) {
+      option.setAttribute("aria-pressed", String(option.dataset.id === background.id));
+    }
+    swapImage = undefined;
+    drawSwap();
+    const image = new Image();
+    image.onload = () => {
+      if (swapBackground.id !== background.id) return;
+      swapImage = image;
+      drawSwap();
+    };
+    image.src = backgroundUrl(background);
+  }
+
+  /** Background tiles for the swap; kept in step with the main picker's list. */
+  function renderSwapPicker(): void {
+    if (!backgrounds.some((background) => background.id === swapBackground.id)) swapBackground = selectedBackground;
+    swapBackgrounds.replaceChildren(...backgrounds.map((background) => {
+      const option = document.createElement("div");
+      option.className = "background-option";
+      option.dataset.id = background.id;
+      option.setAttribute("aria-pressed", String(background.id === swapBackground.id));
+      const select = document.createElement("button");
+      select.type = "button";
+      select.className = "background-select";
+      select.style.backgroundImage = `url("${backgroundUrl(background)}")`;
+      select.setAttribute("aria-label", `Use ${background.label}`);
+      select.addEventListener("click", () => chooseSwapBackground(background));
+      const name = document.createElement("span");
+      name.className = "background-name";
+      name.textContent = background.label;
+      option.append(select, name);
+      return option;
+    }));
+  }
+
+  swapFile.addEventListener("change", async () => {
+    const file = swapFile.files?.[0];
+    swapFile.value = "";
+    if (!file) return;
+    swapMessage.hidden = false;
+    swapMessage.textContent = "Reading…";
+    const loaded = await loadSheetFile(file);
+    if (typeof loaded === "string") {
+      swapMessage.textContent = loaded;
+      swapBody.hidden = !swapSheet;
+      return;
+    }
+    swapSheet = loaded.sheet;
+    swapMessage.textContent = loaded.exact
+      ? `${file.name}: using the exact data saved in this PNG.`
+      : `${file.name}: values, changes and colours were read from the image. Check the preview before downloading.`;
+    swapBody.hidden = false;
+    renderSwapPicker();
+    chooseSwapBackground(swapBackground);
+  });
+
+  swapDownload.addEventListener("click", () => {
+    if (swapSheet) void downloadSheet(swapCanvas, swapSheet, "stat-anvil-tracker.png");
   });
 
   // ---------- Screenshot input ----------
@@ -1152,39 +1320,25 @@ async function initialize(): Promise<void> {
     if (event.target === previousOutputDialog) previousOutputDialog.close();
   });
 
-  previousOutputFile.addEventListener("change", () => {
+  previousOutputFile.addEventListener("change", async () => {
     const file = previousOutputFile.files?.[0];
     previousOutputFile.value = "";
     if (!file) return;
-    const url = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      const canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const context = canvas.getContext("2d");
-      if (!context) return;
-      context.drawImage(image, 0, 0);
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-      const values = readOutputValues(pixels, config.layout, config.output.cardScale);
-      if (Object.keys(values).length === 0) {
-        previousOutputMessage.textContent = "Couldn't find stat values in that image. Is it a stat sheet from this tool?";
-        return;
-      }
-      previousForPair = { savedAt: Date.now(), source: "upload", values };
-      savePreviousOutput(previousForPair);
-      void saveImage(PREVIOUS_IMAGE_KEY, file);
-      setPreviousImage(file);
-      fillFromPrevious();
-      renderStatRows();
-      draw();
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      previousOutputMessage.textContent = "That file couldn't be opened as an image.";
-    };
-    image.src = url;
+    const loaded = await loadSheetFile(file);
+    if (typeof loaded === "string") {
+      previousOutputMessage.textContent = loaded;
+      return;
+    }
+    const values = Object.fromEntries(
+      Object.entries(loaded.sheet.values).filter(([, pair]) => pair.after).map(([id, pair]) => [id, pair.after]),
+    );
+    previousForPair = { savedAt: Date.now(), source: "upload", values };
+    savePreviousOutput(previousForPair);
+    void saveImage(PREVIOUS_IMAGE_KEY, file);
+    setPreviousImage(file);
+    fillFromPrevious();
+    renderStatRows();
+    draw();
   });
 
   function readingState(reading: StatReading): "missing" | "low" | "ok" | "previous" {

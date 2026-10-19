@@ -1019,3 +1019,16 @@ button {
     flex: 1;
   }
 }
+
+/* ---------- Swap background ---------- */
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.swap-body {
+  display: grid;
+  gap: 16px;
+}
