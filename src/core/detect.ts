@@ -1,9 +1,10 @@
 import { clampCropRect, initialCropRect, initialHealthCropRect, type CropRect } from "./crop";
+import { locatePanel } from "./ocr-layout";
 
 export interface CropDetection {
   rect: CropRect;
   confidence: number;
-  method: "left-panel" | "bottom-aligned" | "bottom-default" | "panel-image" | "health-bar" | "health-default" | "anvil-counter" | "anvil-default";
+  method: "left-panel" | "collapsed-panel" | "bottom-default" | "panel-image" | "health-bar" | "health-default" | "anvil-counter" | "anvil-default";
   edges?: StatWindowEdges;
 }
 
@@ -12,11 +13,6 @@ export interface StatWindowEdges {
   right: number;
   top: number;
   bottom: number;
-}
-
-export interface ScreenshotPairDetections {
-  before: CropDetection;
-  after: CropDetection;
 }
 
 export interface AnvilCounterDetection extends CropDetection {
@@ -480,34 +476,32 @@ export function detectAnvilCounter(
   return { rect: reviewRect, valueRect, confidence, method: "anvil-counter" };
 }
 
-export function detectStatWindowPair(
-  beforeImage: ImageData,
-  afterImage: ImageData,
-): ScreenshotPairDetections {
-  const after = detectStatWindow(afterImage);
-  const before = detectStatWindow(beforeImage);
-  if (!after.edges || !before.edges) return { before, after };
-
-  const afterWidth = after.edges.right - after.edges.left;
-  const afterHeight = after.edges.bottom - after.edges.top;
-  const beforeWidth = before.edges.right - before.edges.left;
-  if (afterWidth <= 0 || afterHeight <= 0 || beforeWidth <= 0) return { before, after };
-
-  const beforeHeight = beforeWidth * (afterHeight / afterWidth);
-  const alignedTop = before.edges.bottom - beforeHeight;
-  const rect = clampCropRect({
-    x: before.edges.left / beforeImage.width,
-    y: alignedTop / beforeImage.height,
-    width: beforeWidth / beforeImage.width,
-    height: beforeHeight / beforeImage.height,
+/**
+ * Finds the stat panel: its left border from the gold frame, then its rows and top/bottom
+ * borders from the text (see locatePanel). Handles borders cut off by the screenshot and a
+ * collapsed top half; falls back to the border-only detection when no rows are found.
+ */
+export function detectStatPanel(image: ImageData): CropDetection {
+  const window = detectStatWindow(image);
+  if (!window.edges) return window;
+  const location = locatePanel(image, {
+    x: window.edges.left,
+    y: 0,
+    width: window.edges.right - window.edges.left,
+    height: image.height,
   });
+  if (!location) return window;
+  const { rect } = location;
   return {
-    after,
-    before: {
-      ...before,
-      rect,
-      method: "bottom-aligned",
-      confidence: Math.min(0.99, Math.min(before.confidence, after.confidence) + 0.05),
-    },
+    rect: clampCropRect({
+      x: rect.x / image.width,
+      y: rect.y / image.height,
+      width: rect.width / image.width,
+      height: rect.height / image.height,
+    }),
+    // Four evenly spaced text rows at the panel's scale are strong evidence on their own.
+    confidence: Math.max(window.confidence, 0.85),
+    method: location.collapsed ? "collapsed-panel" : "left-panel",
+    edges: { left: rect.x, right: rect.x + rect.width, top: rect.y, bottom: rect.y + rect.height },
   };
 }

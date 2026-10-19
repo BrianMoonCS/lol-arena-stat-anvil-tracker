@@ -13,7 +13,7 @@ import {
   readValueRegion,
   type PixelRecognizer,
 } from "../src/core/ocr-layout";
-import { GROUND_TRUTH, loadExamplePair, type Side } from "./support/fixtures";
+import { EXAMPLE_PAIRS, loadScreenshot, type Side } from "./support/fixtures";
 import { encodePng } from "./support/png";
 
 let worker: Awaited<ReturnType<typeof createWorker>>;
@@ -44,29 +44,28 @@ const recognizeWith = (characters: string): PixelRecognizer => async (image) => 
 };
 const recognize = recognizeWith(STAT_CHARACTERS);
 
-it("reads every stat, anvil count and max health in the example screenshots exactly", async () => {
-  const pair = loadExamplePair();
+it.each(EXAMPLE_PAIRS)("reads every visible value in the $name pair exactly", async ({ name, files, truth }) => {
   const lines: string[] = [];
   const misses: string[] = [];
   for (const side of ["before", "after"] as Side[]) {
-    const { image, panel, anvilValue, health: healthRect } = pair[side];
+    const { image, panel, anvilValue, health: healthRect } = loadScreenshot(files[side]);
     const stats = await extractPanelStats(image, panel, recognize);
     const anvil = await readValueRegion(image, anvilValue, recognize);
     const health = await readHealth(image, healthRect, recognizeWith(HEALTH_CHARACTERS))
       ?? { value: "(unparsed)", confidence: 0 };
     const readings = [
-      ...stats.map((stat) => ({ id: stat.id, ...stat, expected: GROUND_TRUTH[side].stats[stat.id]! })),
-      { id: "anvilCount", ...anvil, expected: GROUND_TRUTH[side].anvilCount },
-      { id: "health", ...health, expected: GROUND_TRUTH[side].health },
+      ...stats.map((stat) => ({ id: stat.id, ...stat, expected: truth[side].stats[stat.id]! })),
+      { id: "anvilCount", ...anvil, expected: truth[side].anvilCount },
+      { id: "health", ...health, expected: truth[side].health },
     ];
     for (const { id, value, confidence, expected } of readings) {
       const ok = value === expected;
-      const line = `${side.padEnd(6)} ${id.padEnd(21)} want ${expected.padEnd(7)} got ${value.padEnd(9)} ${Math.round(confidence * 100)}%`;
+      const line = `${name} | ${side.padEnd(6)} ${id.padEnd(21)} want ${expected.padEnd(7)} got ${value.padEnd(9)} ${Math.round(confidence * 100)}%`;
       lines.push(ok ? line : `${line}  <-- MISS`);
       if (!ok) misses.push(line);
     }
-    expect(parseAnvilCount(anvil)?.value).toBe(GROUND_TRUTH[side].anvilCount);
+    expect(parseAnvilCount(anvil)?.value).toBe(truth[side].anvilCount);
   }
-  if (process.env.OCR_REPORT) writeFileSync(process.env.OCR_REPORT, lines.join("\n"));
+  if (process.env.OCR_REPORT) writeFileSync(process.env.OCR_REPORT, `${lines.join("\n")}\n`, { flag: "a" });
   expect(misses).toEqual([]);
 }, 120_000);

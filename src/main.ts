@@ -24,7 +24,7 @@ import {
 import {
   detectAnvilCounter,
   detectHealthBar,
-  detectStatWindowPair,
+  detectStatPanel,
   type AnvilCounterDetection,
   type CropDetection,
 } from "./core/detect";
@@ -447,6 +447,8 @@ async function initialize(): Promise<void> {
     edited?: boolean;
     /** Carried over from an earlier visit (Fortune), so worth a glance. */
     remembered?: boolean;
+    /** Not in this screenshot (the stat panel's top half is collapsed), so it has to be entered. */
+    hidden?: boolean;
   }
 
   const screenshotUrls: Partial<Record<Side, string>> = {};
@@ -843,10 +845,9 @@ async function initialize(): Promise<void> {
     const before = screenshotPixels.before;
     const after = screenshotPixels.after;
     if (!before || !after) return;
-    const statDetections = detectStatWindowPair(before, after);
     for (const side of SIDES) {
       const pixels = screenshotPixels[side]!;
-      const stats = statDetections[side];
+      const stats = detectStatPanel(pixels);
       const health = detectHealthBar(pixels, stats.rect);
       const anvil = detectAnvilCounter(pixels, stats.rect, health.rect);
       cropDetections[side] = { stats, health, anvil };
@@ -874,9 +875,11 @@ async function initialize(): Promise<void> {
 
       const status = query<HTMLSpanElement>(app, `.detection-status[data-side="${side}"]`);
       const detection = detections.stats;
-      const found = detection.method === "left-panel" || detection.method === "bottom-aligned" ||
+      const found = detection.method === "left-panel" || detection.method === "collapsed-panel" ||
         detection.method === "panel-image";
-      status.textContent = found ? (detection.method === "bottom-aligned" ? "aligned to After" : "auto") : "not found: adjust";
+      status.textContent = !found
+        ? "not found: adjust"
+        : detection.method === "collapsed-panel" ? "collapsed panel: top stats not shown" : "auto";
       status.classList.toggle("is-warning", !found || detection.confidence < 0.5);
       status.title = `Stat window ${detection.method} ${Math.round(detection.confidence * 100)}%, ` +
         `health ${detections.health.method} ${Math.round(detections.health.confidence * 100)}%, ` +
@@ -984,7 +987,10 @@ async function initialize(): Promise<void> {
       const missing: StatReading = { value: "", confidence: 0 };
       for (const { id, source } of STATS) {
         const sideReading = (side: Side): StatReading => {
-          if (source === "panel") return panelStats[side].find((stat) => stat.id === id) ?? missing;
+          if (source === "panel") {
+            const stat = panelStats[side].find((candidate) => candidate.id === id);
+            return stat ? { ...stat, hidden: !stat.visible } : missing;
+          }
           if (source === "health") return health[side] ?? missing;
           if (source === "anvil") return anvil[side] ?? missing;
           const value = manualValues[id]![side];
@@ -1089,7 +1095,9 @@ async function initialize(): Promise<void> {
             : reading[side].remembered
               ? "Remembered from last time; check it's still right"
             : state === "missing"
-              ? source === "manual" ? "Enter this value" : "Could not read this value; enter it"
+              ? reading[side].hidden
+                ? `Not shown in the ${side} screenshot (stat panel collapsed); enter it`
+                : source === "manual" ? "Enter this value" : "Could not read this value; enter it"
               : reading[side].verified
                 ? "Read and format-checked"
                 : `OCR confidence ${Math.round(reading[side].confidence * 100)}%`;

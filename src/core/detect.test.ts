@@ -3,7 +3,6 @@ import {
   detectAnvilCounter,
   detectHealthBar,
   detectStatWindow,
-  detectStatWindowPair,
 } from "./detect";
 import type { CropRect } from "./crop";
 
@@ -67,35 +66,6 @@ describe("automatic screenshot crop detection", () => {
       expect(detection.method).toBe("left-panel");
       expect(Math.round(detection.rect.x * image.width)).toBe(borderX - 1);
     }
-  });
-
-  it("aligns Before to the visible bottom border using After's panel aspect", () => {
-    const after = makeImage(500, 200, [90, 90, 90]);
-    paintRect(after, 28, 20, 137, 180, [15, 32, 27]);
-    paintRect(after, 25, 20, 28, 180, [176, 139, 69]);
-    paintRect(after, 137, 20, 140, 180, [122, 116, 91]);
-    paintRect(after, 25, 18, 140, 21, [122, 116, 91]);
-    paintRect(after, 25, 179, 140, 182, [176, 139, 69]);
-
-    const before = makeImage(500, 200, [90, 90, 90]);
-    paintRect(before, 38, 20, 147, 170, [15, 32, 27]);
-    paintRect(before, 35, 20, 38, 170, [176, 139, 69]);
-    paintRect(before, 147, 20, 150, 170, [122, 116, 91]);
-    paintRect(before, 35, 18, 150, 21, [122, 116, 91]);
-    paintRect(before, 35, 169, 150, 172, [176, 139, 69]);
-    paintRect(before, 100, 12, 160, 80, [115, 112, 105]);
-
-    const detections = detectStatWindowPair(before, after);
-    expect(detections.before.method).toBe("bottom-aligned");
-    const beforeWidth = detections.before.edges!.right - detections.before.edges!.left;
-    const beforeHeight = detections.before.rect.height * before.height;
-    const afterWidth = detections.after.edges!.right - detections.after.edges!.left;
-    const afterHeight = detections.after.edges!.bottom - detections.after.edges!.top;
-    expect(beforeHeight / beforeWidth).toBeCloseTo(afterHeight / afterWidth, 4);
-    expect(detections.before.rect.y * before.height + beforeHeight).toBeCloseTo(
-      detections.before.edges!.bottom,
-      1,
-    );
   });
 
   it("finds the long green Health bar to the right of the stat panel", () => {

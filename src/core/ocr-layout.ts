@@ -8,6 +8,8 @@ export interface RecognizedText {
 
 export interface ExtractedStat extends RecognizedText {
   id: string;
+  /** False when the screenshot doesn't show this stat (the panel's top half is collapsed). */
+  visible: boolean;
 }
 
 export interface PanelValueRegion {
@@ -69,63 +71,187 @@ export function getPanelValueRegions(width: number, height: number): PanelValueR
   });
 }
 
-// Horizontal slice of each column where a value's first digit always sits, used to find row bands.
-const ROW_PROBE_X: Record<0 | 1, { start: number; end: number }> = {
-  0: { start: 0.19, end: 0.3 },
-  1: { start: 0.65, end: 0.76 },
-};
-const PANEL_ROWS = 8;
+// Horizontal slice of each column where a row's value starts, used to find text rows.
+const ROW_PROBE_X = { start: 0.19, end: 0.3 };
+const RIGHT_ROW_PROBE_X = { start: 0.65, end: 0.76 };
 const TEXT_LUMINANCE = 140;
+/**
+ * Row centers above the bottom row, in row pitches. The bottom block (rows 4-7) is always on
+ * screen; the top block (rows 0-3) sits above a divider 1.5 pitches tall and can be collapsed.
+ */
+const ROW_OFFSETS_IN_PITCH = [7.47, 6.47, 5.47, 4.47, 3, 2, 1, 0];
+/** Panel width (left border to right edge) in row pitches, measured on the example screenshots. */
+const PANEL_WIDTH_IN_PITCH = 6.75;
 
 interface Band {
   top: number;
   bottom: number;
 }
 
-/** Finds the vertical extent of each of the 8 stat rows in one panel column from bright text pixels. */
-export function findRowBands(panel: PixelImage, column: 0 | 1): Band[] | undefined {
-  const probe = ROW_PROBE_X[column];
-  const left = Math.round(panel.width * probe.start);
-  const right = Math.round(panel.width * probe.end);
-  const isText: boolean[] = [];
-  for (let y = 0; y < panel.height; y += 1) {
-    let bright = 0;
-    for (let x = left; x < right; x += 1) {
-      if (pixelLuminance(panel, x, y) > TEXT_LUMINANCE) bright += 1;
-    }
-    isText.push(bright >= 2);
-  }
+export interface PanelRow {
+  center: number;
+  height: number;
+}
 
+export interface PanelLocation {
+  left: number;
+  width: number;
+  pitch: number;
+  /** Rows 0-7 per column (left, right); the top four are undefined when the panel is collapsed. */
+  rows: [Array<PanelRow | undefined>, Array<PanelRow | undefined>];
+  /** The panel from its top border to its bottom border, clipped to the image. */
+  rect: PixelRect;
+  collapsed: boolean;
+}
+
+function textBands(image: PixelImage, left: number, right: number, top: number, bottom: number): Band[] {
   const bands: Band[] = [];
-  for (let y = 0; y < panel.height; y += 1) {
-    if (!isText[y]) continue;
+  for (let y = Math.max(0, top); y < Math.min(image.height, bottom); y += 1) {
+    let bright = 0;
+    for (let x = Math.max(0, left); x < Math.min(image.width, right); x += 1) {
+      if (pixelLuminance(image, x, y) > TEXT_LUMINANCE) bright += 1;
+    }
+    if (bright < 2) continue;
     const previous = bands[bands.length - 1];
     if (previous && y - previous.bottom <= 2) previous.bottom = y;
     else bands.push({ top: y, bottom: y });
   }
-  // Dividers and borders are a pixel or two tall; text rows are several percent of the panel.
-  const minimumHeight = panel.height * 0.025;
-  const textBands = bands.filter((band) => band.bottom - band.top + 1 >= minimumHeight);
-  return textBands.length === PANEL_ROWS ? textBands : undefined;
+  // Borders and dividers are a pixel or two tall; text rows are several pixels.
+  return bands.filter((band) => band.bottom - band.top >= 3);
+}
+
+const centerOf = (band: Band) => (band.top + band.bottom) / 2;
+
+/** The lowest run of four evenly spaced text rows: the panel's always-visible bottom block. */
+function findBottomBlock(bands: Band[]): { rows: Band[]; pitch: number } | undefined {
+  for (let start = bands.length - 4; start >= 0; start -= 1) {
+    const rows = bands.slice(start, start + 4);
+    const gaps = rows.slice(1).map((band, index) => centerOf(band) - centerOf(rows[index]!));
+    const pitch = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+    const tallest = Math.max(...rows.map((band) => band.bottom - band.top + 1));
+    if (gaps.every((gap) => Math.abs(gap - pitch) <= pitch * 0.15) && pitch > tallest * 1.5) {
+      return { rows, pitch };
+    }
+  }
+  return undefined;
+}
+
+/** Strongest light/dark change between rows, scanned from `from` toward `to`, across the panel. */
+function findBorder(image: PixelImage, left: number, right: number, from: number, to: number): number | undefined {
+  const step = from <= to ? 1 : -1;
+  let best: { y: number; strength: number } | undefined;
+  for (let y = from; step > 0 ? y <= to : y >= to; y += step) {
+    if (y < 1 || y >= image.height) continue;
+    let difference = 0;
+    let sampled = 0;
+    for (let x = Math.max(0, left); x < Math.min(image.width, right); x += 2) {
+      difference += Math.abs(pixelLuminance(image, x, y) - pixelLuminance(image, x, y - 1));
+      sampled += 1;
+    }
+    const strength = sampled > 0 ? difference / sampled : 0;
+    if (!best || strength > best.strength) best = { y, strength };
+  }
+  // A weak "edge" is just texture; a real border stands out clearly.
+  return best && best.strength >= 12 ? best.y : undefined;
 }
 
 /**
- * Value regions with X from the annotated boxes and Y snapped to the detected text rows,
- * so small shifts in the panel crop don't clip the digits. Falls back to the fixed boxes.
+ * Finds the stat panel's rows inside `region` from the text itself, so it works when the panel's
+ * borders are cut off by the screenshot or the top half of the panel is collapsed. The region's
+ * left edge is taken as the panel's left border; scale comes from the row spacing.
  */
-export function locatePanelValueRegions(panel: PixelImage): PanelValueRegion[] {
-  const fixed = getPanelValueRegions(panel.width, panel.height);
-  const bandsByColumn = { 0: findRowBands(panel, 0), 1: findRowBands(panel, 1) } as const;
-  return PANEL_STAT_CELLS.map(({ id, row, column }, index) => {
-    const region = fixed[index]!;
-    const band = bandsByColumn[column]?.[row];
-    if (!band) return region;
-    const bandHeight = band.bottom - band.top + 1;
-    const padding = Math.max(2, Math.round(bandHeight * 0.3));
-    const top = Math.max(0, band.top - padding);
-    const bottom = Math.min(panel.height - 1, band.bottom + padding);
-    return { id, x: region.x, width: region.width, y: top, height: bottom - top + 1 };
+export function locatePanel(image: PixelImage, region: PixelRect): PanelLocation | undefined {
+  const top = region.y;
+  const bottom = region.y + region.height;
+  let width = region.width;
+  let block: { rows: Band[]; pitch: number } | undefined;
+  let bands: Band[] = [];
+  // The region's width may be off (the panel's right edge touches the portrait ring), so locate
+  // once with it, derive the width from the row spacing, then locate again with that width.
+  for (let pass = 0; pass < 2; pass += 1) {
+    bands = textBands(
+      image,
+      Math.round(region.x + width * ROW_PROBE_X.start),
+      Math.round(region.x + width * ROW_PROBE_X.end),
+      top,
+      bottom,
+    );
+    block = findBottomBlock(bands);
+    if (!block) return undefined;
+    width = block.pitch * PANEL_WIDTH_IN_PITCH;
+  }
+  const { rows: bottomRows, pitch } = block!;
+  const toRow = (band: Band): PanelRow => ({ center: centerOf(band), height: band.bottom - band.top + 1 });
+  const bottomCenter = centerOf(bottomRows[3]!);
+
+  // The top block counts as shown when at least three of its rows sit where the layout puts them.
+  const topRows = [0, 1, 2, 3].map((row) => {
+    const expected = bottomCenter - ROW_OFFSETS_IN_PITCH[row]! * pitch;
+    return bands.find((band) => Math.abs(centerOf(band) - expected) <= pitch * 0.25);
   });
+  const collapsed = topRows.filter(Boolean).length < 3;
+  const typicalHeight = bottomRows[0]!.bottom - bottomRows[0]!.top + 1;
+  const rows: Array<PanelRow | undefined> = [
+    ...topRows.map((band, row) => {
+      if (collapsed) return undefined;
+      // A shown block with one faint row still gets that row, at its layout position.
+      return band
+        ? toRow(band)
+        : { center: bottomCenter - ROW_OFFSETS_IN_PITCH[row]! * pitch, height: typicalHeight };
+    }),
+    ...bottomRows.map(toRow),
+  ];
+
+  // The right column's text can sit a pixel off the left column's, so snap it separately.
+  const left = region.x;
+  const right = Math.round(region.x + width);
+  const rightBands = textBands(
+    image,
+    Math.round(left + width * RIGHT_ROW_PROBE_X.start),
+    Math.round(left + width * RIGHT_ROW_PROBE_X.end),
+    top,
+    bottom,
+  );
+  const rightRows = rows.map((row) => {
+    if (!row) return undefined;
+    const band = rightBands.find((candidate) => Math.abs(centerOf(candidate) - row.center) <= pitch * 0.3);
+    return band ? toRow(band) : row;
+  });
+
+  // Borders: the strongest edge between the outermost row and about a pitch beyond it.
+  const firstCenter = rows.find(Boolean)!.center;
+  const topEdge = findBorder(image, left, right, Math.round(firstCenter - pitch * 0.45), Math.round(firstCenter - pitch * 1.1));
+  const bottomEdge = findBorder(image, left, right, Math.round(bottomCenter + pitch * 0.45), Math.round(bottomCenter + pitch * 1.1));
+  const rectTop = Math.max(0, topEdge ?? Math.round(firstCenter - pitch * 0.75));
+  const rectBottom = Math.min(image.height, bottomEdge ?? Math.round(bottomCenter + pitch * 0.75));
+  return {
+    left,
+    width,
+    pitch,
+    rows: [rows, rightRows],
+    rect: { x: left, y: rectTop, width: Math.min(image.width - left, right - left), height: rectBottom - rectTop },
+    collapsed,
+  };
+}
+
+/** Value boxes in image pixels, for the rows the screenshot shows. */
+export function panelValueRegions(location: PanelLocation): PanelValueRegion[] {
+  const regions: PanelValueRegion[] = [];
+  for (const { id, row, column } of PANEL_STAT_CELLS) {
+    const panelRow = location.rows[column][row];
+    if (!panelRow) continue;
+    const box = VALUE_BOXES[id]!;
+    const padding = Math.max(2, Math.round(panelRow.height * 0.3));
+    const top = Math.round(panelRow.center - panelRow.height / 2) - padding;
+    regions.push({
+      id,
+      x: Math.round(location.left + box.x * location.width),
+      y: top,
+      width: Math.max(1, Math.round(box.width * location.width)),
+      height: panelRow.height + padding * 2,
+    });
+  }
+  return regions;
 }
 
 export function normalizeOcrText(value: string): string {
@@ -187,17 +313,30 @@ export async function readValueRegion(
   };
 }
 
-/** Reads all 13 tracked stats from a screenshot, given the stat panel's pixel rectangle. */
+/**
+ * Reads all 13 tracked stats from a screenshot. `region` is where to look for the stat panel
+ * (the detected or user-adjusted crop). Stats the screenshot doesn't show come back empty
+ * with visible: false. If no panel rows are found, falls back to the fixed annotated boxes.
+ */
 export async function extractPanelStats(
   image: PixelImage,
-  panelRect: PixelRect,
+  region: PixelRect,
   recognize: PixelRecognizer,
 ): Promise<ExtractedStat[]> {
-  const panel = cropPixels(image, panelRect);
+  const location = locatePanel(image, region);
+  const regions = location
+    ? panelValueRegions(location)
+    : getPanelValueRegions(region.width, region.height)
+      .map((box) => ({ ...box, x: box.x + region.x, y: box.y + region.y }));
   const results: ExtractedStat[] = [];
-  for (const region of locatePanelValueRegions(panel)) {
-    const reading = await readValueRegion(panel, region, recognize, COMPOUND_STATS.has(region.id));
-    results.push({ id: region.id, ...reading });
+  for (const { id } of PANEL_STAT_CELLS) {
+    const box = regions.find((candidate) => candidate.id === id);
+    if (!box) {
+      results.push({ id, value: "", confidence: 0, visible: false });
+      continue;
+    }
+    const reading = await readValueRegion(image, box, recognize, COMPOUND_STATS.has(id));
+    results.push({ id, ...reading, visible: true });
   }
   return results;
 }
