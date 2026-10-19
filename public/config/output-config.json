@@ -1,8 +1,9 @@
 {
-  "_comment": "Slot x/maxWidth are fractions of image width; y (vertical center of the digits) and size (font size) are fractions of image height.",
-  "defaultSize": {
-    "width": 1536,
-    "height": 864
+  "_comment": "The output is output.width x output.height with the background card scaled to cardScale and centered on a transparent margin. Slot x/maxWidth are fractions of the card's width; y (vertical center of the digits) and size (font size) are fractions of the card's height.",
+  "output": {
+    "width": 2560,
+    "height": 1440,
+    "cardScale": 0.8
   },
   "layout": [
     {

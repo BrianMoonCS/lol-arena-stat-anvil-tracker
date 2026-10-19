@@ -1,6 +1,6 @@
 import type { DeltaColor, TextRun } from "./output-format";
 
-/** One output line. x and maxWidth are fractions of image width; y and size of image height. */
+/** One output line. x and maxWidth are fractions of the card's width; y and size of its height. */
 export interface SlotLayout {
   id: string;
   /** Left edge of the text. */
@@ -21,7 +21,11 @@ export interface BackgroundEntry {
 }
 
 export interface OutputConfig {
-  defaultSize: { width: number; height: number };
+  /**
+   * The exported image: the background "card" is scaled to cardScale of this size and centered,
+   * and the margin around it is left transparent.
+   */
+  output: { width: number; height: number; cardScale: number };
   layout: SlotLayout[];
   backgrounds: BackgroundEntry[];
 }
@@ -108,7 +112,20 @@ function deltaFill(
   return gradient;
 }
 
-/** Draws the background at its own resolution, then every slot's text runs over it. */
+/** The card's rectangle inside the output image. */
+export function cardRect(config: OutputConfig): { x: number; y: number; width: number; height: number } {
+  const { width, height, cardScale } = config.output;
+  const cardWidth = Math.round(width * cardScale);
+  const cardHeight = Math.round(height * cardScale);
+  return {
+    x: Math.round((width - cardWidth) / 2),
+    y: Math.round((height - cardHeight) / 2),
+    width: cardWidth,
+    height: cardHeight,
+  };
+}
+
+/** Draws the background card centered on a transparent canvas, then every slot's text over it. */
 export function renderOutput(
   canvas: HTMLCanvasElement,
   config: OutputConfig,
@@ -119,13 +136,17 @@ export function renderOutput(
   const context = canvas.getContext("2d");
   if (!context) return;
 
-  const width = backgroundImage?.naturalWidth || config.defaultSize.width;
-  const height = backgroundImage?.naturalHeight || config.defaultSize.height;
-  canvas.width = width;
-  canvas.height = height;
-  context.fillStyle = "#000";
-  context.fillRect(0, 0, width, height);
-  if (backgroundImage) context.drawImage(backgroundImage, 0, 0, width, height);
+  canvas.width = config.output.width;
+  canvas.height = config.output.height;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const card = cardRect(config);
+  context.imageSmoothingQuality = "high";
+  if (backgroundImage) {
+    context.drawImage(backgroundImage, card.x, card.y, card.width, card.height);
+  } else {
+    context.fillStyle = "#000";
+    context.fillRect(card.x, card.y, card.width, card.height);
+  }
 
   context.textBaseline = "alphabetic";
   context.textAlign = "left";
@@ -133,10 +154,10 @@ export function renderOutput(
   for (const slot of layout) {
     const runs = lines[slot.id];
     if (!runs || runs.length === 0) continue;
-    const size = fittedFontSize(context, runs, slot.size * height, slot.maxWidth * width);
+    const size = fittedFontSize(context, runs, slot.size * card.height, slot.maxWidth * card.width);
     const { pieces } = placePieces(context, runs, size);
-    const baseline = slot.y * height + size * DIGIT_CENTER_EM;
-    const left = slot.x * width;
+    const baseline = card.y + slot.y * card.height + size * DIGIT_CENTER_EM;
+    const left = card.x + slot.x * card.width;
 
     // Outline every piece first so no outline paints over a neighbouring piece's fill.
     context.lineWidth = size * OUTLINE_EM;

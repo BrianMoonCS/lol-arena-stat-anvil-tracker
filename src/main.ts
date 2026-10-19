@@ -1,5 +1,6 @@
 import "./styles.css";
 import {
+  cardRect,
   loadOutputFont,
   renderOutput,
   type BackgroundEntry,
@@ -405,6 +406,17 @@ async function initialize(): Promise<void> {
   const layoutReset = query<HTMLButtonElement>(app, "#layout-reset");
   const layoutHint = query<HTMLParagraphElement>(app, "#layout-hint");
   const layoutOverlay = query<HTMLDivElement>(app, "#layout-overlay");
+  // Slot positions are relative to the card, so the layout boxes cover just the card.
+  {
+    const card = cardRect(config);
+    const { width, height } = config.output;
+    layoutOverlay.style.inset = [
+      card.y / height,
+      (width - card.x - card.width) / width,
+      (height - card.y - card.height) / height,
+      card.x / width,
+    ].map((fraction) => `${fraction * 100}%`).join(" ");
+  }
   const colorPopover = query<HTMLDivElement>(app, "#delta-color-popover");
   const colorCustomInput = query<HTMLInputElement>(app, "#delta-color-custom");
   const downloadButton = query<HTMLButtonElement>(app, "#download-button");

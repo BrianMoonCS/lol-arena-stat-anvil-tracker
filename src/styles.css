@@ -819,7 +819,8 @@ button {
   position: relative;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #000;
+  /* Checkerboard so the output's transparent margin reads as transparent. */
+  background: repeating-conic-gradient(#1a1e21 0% 25%, #121517 0% 50%) 0 0 / 20px 20px;
   overflow: hidden;
 }
 
