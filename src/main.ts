@@ -48,6 +48,7 @@ import {
   type VisionTask,
   type VisionResult,
 } from "./core/vision";
+import { readOutputValues, TOP_PANEL_STATS } from "./core/output-reader";
 import {
   deleteBackground,
   listStoredBackgrounds,
@@ -198,6 +199,37 @@ function saveLayoutOverrides(overrides: Record<string, SlotLayout[]>): void {
   }
 }
 
+const PREVIOUS_OUTPUT_KEY = "stat-anvil-previous-output-v1";
+
+/** The After values of the last output, used for Before stats a collapsed panel hides. */
+interface PreviousOutput {
+  savedAt: number;
+  source: "download" | "clear" | "upload";
+  values: Record<string, string>;
+}
+
+function loadPreviousOutput(): PreviousOutput | undefined {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(PREVIOUS_OUTPUT_KEY) ?? "null");
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const candidate = parsed as Partial<PreviousOutput>;
+    if (typeof candidate.savedAt !== "number" || typeof candidate.values !== "object" || candidate.values === null) {
+      return undefined;
+    }
+    return candidate as PreviousOutput;
+  } catch {
+    return undefined;
+  }
+}
+
+function savePreviousOutput(previous: PreviousOutput): void {
+  try {
+    localStorage.setItem(PREVIOUS_OUTPUT_KEY, JSON.stringify(previous));
+  } catch {
+    // Without storage the previous output lasts until the page is closed.
+  }
+}
+
 function colorCss(color: DeltaColor): string {
   return color.kind === "solid" ? color.color : `linear-gradient(${color.top}, ${color.bottom})`;
 }
@@ -321,6 +353,13 @@ async function initialize(): Promise<void> {
           ${cropEditorMarkup("after")}
         </div>
       </details>
+      <div id="previous-output" class="previous-output" hidden>
+        <span id="previous-output-message"></span>
+        <label class="ghost-button previous-output-upload">
+          <input id="previous-output-file" type="file" accept="image/*" hidden />
+          <span id="previous-output-button">Upload previous PNG</span>
+        </label>
+      </div>
       <div class="stat-table" role="table" aria-label="Detected stats">
         <div class="stat-row stat-header" role="row">
           <span role="columnheader">Stat</span>
@@ -334,6 +373,7 @@ async function initialize(): Promise<void> {
       <div class="legend">
         <span><i class="legend-swatch is-missing"></i>Missing: enter it</span>
         <span><i class="legend-swatch is-low"></i>Double-check: low confidence or remembered from last time</span>
+        <span><i class="legend-swatch is-previous"></i>From your previous output</span>
       </div>
     </section>
 
@@ -425,6 +465,10 @@ async function initialize(): Promise<void> {
   const reviewStatus = query<HTMLSpanElement>(app, "#review-status");
   const ocrProgress = query<HTMLProgressElement>(app, "#ocr-progress");
   const statRows = query<HTMLDivElement>(app, "#stat-rows");
+  const previousOutputBar = query<HTMLDivElement>(app, "#previous-output");
+  const previousOutputMessage = query<HTMLSpanElement>(app, "#previous-output-message");
+  const previousOutputButton = query<HTMLSpanElement>(app, "#previous-output-button");
+  const previousOutputFile = query<HTMLInputElement>(app, "#previous-output-file");
   const visionEnabledControl = query<HTMLInputElement>(app, "#vision-enabled");
   const visionSettingsPanel = query<HTMLDivElement>(app, "#vision-settings");
   const visionProxyUrlInput = query<HTMLInputElement>(app, "#vision-proxy-url");
@@ -449,6 +493,8 @@ async function initialize(): Promise<void> {
     remembered?: boolean;
     /** Not in this screenshot (the stat panel's top half is collapsed), so it has to be entered. */
     hidden?: boolean;
+    /** Filled in from the previous output because the screenshot doesn't show it. */
+    fromPrevious?: boolean;
   }
 
   const screenshotUrls: Partial<Record<Side, string>> = {};
@@ -467,6 +513,11 @@ async function initialize(): Promise<void> {
     manualValues[id] = loadManualValue(id);
     manualConfirmed[id] = { before: false, after: false };
   }
+  /**
+   * The previous output this pair fills hidden Before stats from. Taken when a new Before
+   * screenshot arrives, so saving this pair's own output (on download) can't feed back into it.
+   */
+  let previousForPair = loadPreviousOutput();
   /** Delta colors chosen for this pair; reset when the screenshots are cleared. */
   let deltaColors: Record<string, DeltaColor> = {};
   const layoutOverrides = loadLayoutOverrides();
@@ -718,7 +769,16 @@ async function initialize(): Promise<void> {
     colorPopover.style.top = `${rect.bottom + 6}px`;
   }
 
+  /** Remembers this pair's After values as the previous output for the next pair. */
+  function rememberOutput(source: PreviousOutput["source"]): void {
+    if (readings.size === 0) return;
+    const values: Record<string, string> = {};
+    for (const [id, reading] of readings) values[id] = reading.after.value;
+    savePreviousOutput({ savedAt: Date.now(), source, values });
+  }
+
   downloadButton.addEventListener("click", () => {
+    rememberOutput("download");
     const link = document.createElement("a");
     link.download = "stat-anvil-tracker.png";
     link.href = outputCanvas.toDataURL("image/png");
@@ -749,6 +809,7 @@ async function initialize(): Promise<void> {
     empty.hidden = true;
     zone.classList.add("has-image");
     setPasteTarget(side === "before" ? "after" : "before");
+    if (side === "before") previousForPair = loadPreviousOutput();
 
     const image = new Image();
     image.onload = () => {
@@ -767,6 +828,7 @@ async function initialize(): Promise<void> {
   }
 
   function clearScreenshots(): void {
+    rememberOutput("clear");
     extractionRun += 1;
     for (const side of SIDES) {
       const url = screenshotUrls[side];
@@ -989,7 +1051,8 @@ async function initialize(): Promise<void> {
         const sideReading = (side: Side): StatReading => {
           if (source === "panel") {
             const stat = panelStats[side].find((candidate) => candidate.id === id);
-            return stat ? { ...stat, hidden: !stat.visible } : missing;
+            if (!stat) return missing;
+            return { ...stat, hidden: !stat.visible };
           }
           if (source === "health") return health[side] ?? missing;
           if (source === "anvil") return anvil[side] ?? missing;
@@ -1000,6 +1063,7 @@ async function initialize(): Promise<void> {
         };
         readings.set(id, { before: sideReading("before"), after: sideReading("after") });
       }
+      fillFromPrevious();
       renderStatRows();
       draw();
     } catch {
@@ -1014,8 +1078,73 @@ async function initialize(): Promise<void> {
 
   // ---------- Review table ----------
 
-  function readingState(reading: StatReading, optional = false): "missing" | "low" | "ok" {
+  /** Puts the previous output's values into Before stats the screenshot doesn't show. */
+  function fillFromPrevious(): void {
+    for (const id of TOP_PANEL_STATS) {
+      const reading = readings.get(id);
+      if (!reading?.before.hidden || reading.before.edited) continue;
+      const value = previousForPair?.values[id] ?? "";
+      reading.before = value
+        ? { value, confidence: 1, hidden: true, fromPrevious: true }
+        : { value: "", confidence: 0, hidden: true };
+    }
+    updatePreviousOutputBar();
+  }
+
+  function updatePreviousOutputBar(): void {
+    const hidden = TOP_PANEL_STATS.filter((id) => readings.get(id)?.before.hidden);
+    previousOutputBar.hidden = hidden.length === 0;
+    if (hidden.length === 0) return;
+    const filled = hidden.filter((id) => readings.get(id)?.before.fromPrevious).length;
+    if (previousForPair && filled > 0) {
+      const when = new Date(previousForPair.savedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+      const how = previousForPair.source === "upload" ? "uploaded PNG" : "last output";
+      previousOutputMessage.textContent =
+        `The Before stat panel is collapsed. Its top stats are filled in blue from your ${how} (${when}).`;
+      previousOutputButton.textContent = "Use a different PNG";
+    } else {
+      previousOutputMessage.textContent =
+        "The Before stat panel is collapsed. Upload your previous stat sheet PNG to fill in its top stats, or type them.";
+      previousOutputButton.textContent = "Upload previous PNG";
+    }
+  }
+
+  previousOutputFile.addEventListener("change", () => {
+    const file = previousOutputFile.files?.[0];
+    previousOutputFile.value = "";
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      const values = readOutputValues(pixels, config.layout, config.output.cardScale);
+      if (Object.keys(values).length === 0) {
+        previousOutputMessage.textContent = "Couldn't find stat values in that image. Is it a stat sheet from this tool?";
+        return;
+      }
+      previousForPair = { savedAt: Date.now(), source: "upload", values };
+      savePreviousOutput(previousForPair);
+      fillFromPrevious();
+      renderStatRows();
+      draw();
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      previousOutputMessage.textContent = "That file couldn't be opened as an image.";
+    };
+    image.src = url;
+  });
+
+  function readingState(reading: StatReading, optional = false): "missing" | "low" | "ok" | "previous" {
     if (reading.value.trim() === "") return optional ? "ok" : "missing";
+    if (reading.fromPrevious) return "previous";
     if (reading.remembered) return "low";
     if (reading.edited || reading.verified) return "ok";
     return reading.confidence < LOW_CONFIDENCE ? "low" : "ok";
@@ -1033,7 +1162,9 @@ async function initialize(): Promise<void> {
       }
     }
     const parts: string[] = [];
+    const fromPrevious = [...readings.values()].filter((reading) => reading.before.fromPrevious).length;
     if (missing) parts.push(`${missing} missing`);
+    if (fromPrevious) parts.push(`${fromPrevious} from previous`);
     if (low) parts.push(`${low} to check`);
     reviewStatus.textContent = parts.length ? parts.join(" · ") : "All values read";
     reviewStatus.dataset.state = missing ? "error" : low ? "warning" : "ok";
@@ -1092,6 +1223,8 @@ async function initialize(): Promise<void> {
           input.dataset.state = state;
           input.title = reading[side].edited
             ? "Edited by you"
+            : reading[side].fromPrevious
+              ? `Not in the ${side} screenshot (stat panel collapsed); filled from your previous output`
             : reading[side].remembered
               ? "Remembered from last time; check it's still right"
             : state === "missing"

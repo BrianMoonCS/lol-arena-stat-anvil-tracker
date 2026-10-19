@@ -16,6 +16,8 @@
   --low: #e6b93f;
   --low-soft: rgba(230, 185, 63, 0.14);
   --ok: #5fb878;
+  --previous: #58a6ff;
+  --previous-soft: rgba(88, 166, 255, 0.14);
   --health: #5fd27a;
   --anvil: #4fc3e8;
   --mono: "DM Mono", ui-monospace, monospace;
@@ -544,6 +546,25 @@ button {
 
 /* ---------- Stat table ---------- */
 
+.previous-output {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--previous);
+  border-radius: 8px;
+  background: var(--previous-soft);
+  font-size: 13px;
+}
+
+.previous-output-upload {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
 .stat-table {
   display: grid;
   border: 1px solid var(--line);
@@ -593,6 +614,11 @@ button {
 .stat-input[data-state="missing"] {
   border-color: var(--missing);
   background: var(--missing-soft);
+}
+
+.stat-input[data-state="previous"] {
+  border-color: var(--previous);
+  background: var(--previous-soft);
 }
 
 .stat-input[data-state="low"] {
@@ -727,6 +753,11 @@ button {
 .legend-swatch.is-missing {
   border-color: var(--missing);
   background: var(--missing-soft);
+}
+
+.legend-swatch.is-previous {
+  border-color: var(--previous);
+  background: var(--previous-soft);
 }
 
 .legend-swatch.is-low {
