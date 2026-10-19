@@ -42,6 +42,18 @@ describe("output formatting", () => {
     expect(line("anvilCount", values("100", "100"))).toBe("100% | 65 (+14)");
     expect(line("anvilCount", values("0%", "0%"))).toBe("65 (+14)");
     expect(line("anvilCount", values("", ""))).toBe("65 (+14)");
+    // A shard that dropped to 0% is hidden along with its delta.
+    expect(line("anvilCount", values("24%", "0%"))).toBe("65 (+14)");
+  });
+
+  it("drops a zero, unchanged anvil count next to a shard, but always shows it alone", () => {
+    const values = (countBefore: string, countAfter: string, shard = "100%") => ({
+      shard: { before: shard, after: shard },
+      anvilCount: { before: countBefore, after: countAfter },
+    });
+    expect(line("anvilCount", values("0", "0"))).toBe("100%");
+    expect(line("anvilCount", values("3", "0"))).toBe("100% | 0 (-3)");
+    expect(line("anvilCount", values("0", "0", "0%"))).toBe("0");
   });
 
   it("colors shard's delta purple and other deltas green unless overridden", () => {

@@ -126,10 +126,16 @@ export function buildSlotRuns(
   if (id === "anvilCount") {
     const runs: TextRun[] = [];
     const shardPair = normalizePair("shard", values.shard ?? { before: "", after: "" });
-    if (shardPair.after !== "" && !isZero(shardPair.after)) {
-      runs.push(...valueWithDelta(shardPair, colors.shard ?? DELTA_PRESETS.purple), GAP);
+    const showShard = shardPair.after !== "" && !isZero(shardPair.after);
+    if (showShard) {
+      runs.push(...valueWithDelta(shardPair, colors.shard ?? DELTA_PRESETS.purple));
+      // Next to a shard, a count of 0 that didn't change is dropped, like a "| 0%" half.
+      if (!isZero(pair.after) || formatDelta(pair.before, pair.after) !== undefined) {
+        runs.push(GAP, ...valueWithDelta(pair, color, undefined, "0", SEPARATOR_PREFIX));
+      }
+      return runs;
     }
-    runs.push(...valueWithDelta(pair, color, undefined, "0", runs.length > 0 ? SEPARATOR_PREFIX : ""));
+    runs.push(...valueWithDelta(pair, color));
     return runs;
   }
 
