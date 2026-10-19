@@ -130,6 +130,22 @@ export function preprocessValueRegion(
       const isGreen = !white && green > red * 1.15 && green > blue * 1.15;
       mask[i] = !excluded[i] && luminance[i]! > threshold && !isGreen ? 1 : 0;
     }
+    if (options.dropEdgeShapes) {
+      // Erase long horizontal runs: the portrait frame's thin gold lines can touch a digit and
+      // fuse it to the ring. No digit has a horizontal stroke over ~60% of its height.
+      const longest = Math.ceil(height * 0.55);
+      for (let y = 0; y < height; y += 1) {
+        let start = -1;
+        for (let x = 0; x <= width; x += 1) {
+          const on = x < width && mask[y * width + x] === 1;
+          if (on && start < 0) start = x;
+          if (!on && start >= 0) {
+            if (x - start >= longest) mask.fill(0, y * width + start, y * width + x);
+            start = -1;
+          }
+        }
+      }
+    }
     return { mask, threshold };
   };
   const touchesSide = (component: Component) =>

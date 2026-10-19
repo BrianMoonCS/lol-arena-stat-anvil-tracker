@@ -154,6 +154,47 @@ export const EXAMPLE_PAIRS: ExamplePair[] = [
       },
     },
   },
+  {
+    // The After's MR "213" touches the portrait frame and read as "21".
+    name: "MR touching the portrait",
+    files: { before: "mr-overlap-before.png", after: "mr-overlap-after.png" },
+    truth: {
+      after: {
+        stats: {
+          healAndShieldPower: "0%",
+          armorPenetration: "58|0%",
+          magicPenetration: "0|0%",
+          omnivamp: "0%",
+          tenacity: "0%",
+          attackDamage: "86",
+          abilityPower: "0",
+          armor: "221",
+          magicResistance: "213",
+          attackSpeed: "1.32",
+          abilityHaste: "275",
+          criticalStrikeChance: "0%",
+          movementSpeed: "581",
+        },
+        anvilCount: "12",
+        health: "2965",
+      },
+      before: {
+        stats: {
+          ...HIDDEN_TOP_HALF,
+          attackDamage: "86",
+          abilityPower: "0",
+          armor: "141",
+          magicResistance: "119",
+          attackSpeed: "1.10",
+          abilityHaste: "174",
+          criticalStrikeChance: "0%",
+          movementSpeed: "581",
+        },
+        anvilCount: "10",
+        health: "2965",
+      },
+    },
+  },
 ];
 
 export interface LoadedScreenshot {
