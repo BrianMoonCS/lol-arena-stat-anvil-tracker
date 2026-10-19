@@ -151,20 +151,64 @@ export function preprocessValueRegion(
   const touchesSide = (component: Component) =>
     component.minX === 0 || component.maxX === width - 1 || component.minY === 0 || component.maxY === height - 1;
 
+  /**
+   * A digit can touch the portrait frame through a few faint pixels and get dropped with it.
+   * Within each edge shape, look at only its bright core: a core piece that is digit-tall and
+   * clear of the box edges is a digit, so its pixels are kept. The frame's own bright bits are
+   * short slivers and don't qualify.
+   */
+  const salvageDigits = (edgeShapes: Component[], others: Component[], cut: number): number[] => {
+    const tallOthers = others.map((c) => c.maxY - c.minY + 1).filter((h) => h >= height * 0.3).sort((a, b) => a - b);
+    const textHeight = tallOthers.length > 0 ? tallOthers[Math.floor((tallOthers.length - 1) / 2)]! : height * 0.6;
+    const kept: number[] = [];
+    for (const shape of edgeShapes) {
+      const shapeLuminance = shape.pixels.map((pixel) => luminance[pixel]!).sort((a, b) => a - b);
+      const brightest = shapeLuminance[Math.floor((shapeLuminance.length - 1) * 0.98)]!;
+      const core = cut + (brightest - cut) * 0.35;
+      const coreMask = new Uint8Array(width * height);
+      for (const pixel of shape.pixels) if (luminance[pixel]! > core) coreMask[pixel] = 1;
+      for (const piece of connectedComponents(coreMask, width, height)) {
+        const pieceHeight = piece.maxY - piece.minY + 1;
+        if (touchesSide(piece) || pieceHeight < textHeight * 0.7 || pieceHeight > textHeight * 1.3) continue;
+        // Keep the piece plus the shape's pixels right around it (the digit's soft edges).
+        const inPiece = new Set(piece.pixels);
+        for (const pixel of shape.pixels) {
+          const x = pixel % width;
+          const y = (pixel - x) / width;
+          let near = inPiece.has(pixel);
+          for (let dy = -1; dy <= 1 && !near; dy += 1) {
+            for (let dx = -1; dx <= 1 && !near; dx += 1) {
+              if (inPiece.has((y + dy) * width + x + dx)) near = true;
+            }
+          }
+          if (near) kept.push(pixel);
+        }
+      }
+    }
+    return kept;
+  };
+
   let { mask, threshold } = buildMask();
   let allComponents = connectedComponents(mask, width, height);
   if (options.dropEdgeShapes && allComponents.some(touchesSide)) {
+    const edgeShapes = allComponents.filter(touchesSide);
+    const keepPixels = new Uint8Array(width * height);
+    for (const pixel of salvageDigits(edgeShapes, allComponents.filter((c) => !touchesSide(c)), threshold)) {
+      keepPixels[pixel] = 1;
+    }
     // Exclude the edge shapes and a pixel around them (their soft edges), then threshold again:
     // a bright ring would otherwise push a dim grey "0" below the cut-off.
-    for (const component of allComponents.filter(touchesSide)) {
+    for (const component of edgeShapes) {
       for (const pixel of component.pixels) {
+        if (keepPixels[pixel]) continue;
         const x = pixel % width;
         const y = (pixel - x) / width;
         for (let dy = -1; dy <= 1; dy += 1) {
           for (let dx = -1; dx <= 1; dx += 1) {
             const nx = x + dx;
             const ny = y + dy;
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height) excluded[ny * width + nx] = 1;
+            const next = ny * width + nx;
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height && !keepPixels[next]) excluded[next] = 1;
           }
         }
       }

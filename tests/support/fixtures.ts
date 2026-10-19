@@ -195,6 +195,48 @@ export const EXAMPLE_PAIRS: ExamplePair[] = [
       },
     },
   },
+  {
+    // ~1000px wide captures with the shop bar and a LEVEL UP prompt around the panel;
+    // MR "216" touched the portrait frame through faint pixels and read as "21".
+    name: "higher resolution",
+    files: { before: "hires-before.png", after: "hires-after.png" },
+    truth: {
+      after: {
+        stats: {
+          healAndShieldPower: "0%",
+          armorPenetration: "96|0%",
+          magicPenetration: "0|0%",
+          omnivamp: "0%",
+          tenacity: "0%",
+          attackDamage: "89",
+          abilityPower: "0",
+          armor: "227",
+          magicResistance: "216",
+          attackSpeed: "1.34",
+          abilityHaste: "259",
+          criticalStrikeChance: "0%",
+          movementSpeed: "577",
+        },
+        anvilCount: "13",
+        health: "3160",
+      },
+      before: {
+        stats: {
+          ...HIDDEN_TOP_HALF,
+          attackDamage: "89",
+          abilityPower: "0",
+          armor: "227",
+          magicResistance: "216",
+          attackSpeed: "1.34",
+          abilityHaste: "259",
+          criticalStrikeChance: "0%",
+          movementSpeed: "577",
+        },
+        anvilCount: "12",
+        health: "3160",
+      },
+    },
+  },
 ];
 
 export interface LoadedScreenshot {
