@@ -52,6 +52,8 @@ import { readOutputValues, TOP_PANEL_STATS } from "./core/output-reader";
 import {
   deleteBackground,
   listStoredBackgrounds,
+  loadImage,
+  saveImage,
   loadSelectedBackgroundId,
   saveBackground,
   saveSelectedBackgroundId,
@@ -200,6 +202,8 @@ function saveLayoutOverrides(overrides: Record<string, SlotLayout[]>): void {
 }
 
 const PREVIOUS_OUTPUT_KEY = "stat-anvil-previous-output-v1";
+/** IndexedDB key of the previous output's image, shown as a preview. */
+const PREVIOUS_IMAGE_KEY = "previous-output";
 
 /** The After values of the last output, used for Before stats a collapsed panel hides. */
 interface PreviousOutput {
@@ -354,6 +358,9 @@ async function initialize(): Promise<void> {
         </div>
       </details>
       <div id="previous-output" class="previous-output" hidden>
+        <button id="previous-output-preview" class="previous-output-thumb" type="button" hidden aria-label="View the previous output">
+          <img alt="" />
+        </button>
         <span id="previous-output-message"></span>
         <label class="ghost-button previous-output-upload">
           <input id="previous-output-file" type="file" accept="image/*" hidden />
@@ -404,6 +411,14 @@ async function initialize(): Promise<void> {
       </div>
       <p id="layout-hint" class="disclosure-note" hidden>Drag a box to move a line; drag its corner to resize. Changes are saved for this background.</p>
     </section>
+
+    <dialog id="previous-output-dialog" class="image-dialog" aria-label="Previous output">
+      <form method="dialog" class="image-dialog-bar">
+        <span>Previous output</span>
+        <button class="ghost-button" type="submit">Close</button>
+      </form>
+      <img alt="The previous stat sheet these values came from" />
+    </dialog>
 
     <div id="delta-color-popover" class="color-popover" popover>
       <span class="color-popover-title">Change color</span>
@@ -469,6 +484,8 @@ async function initialize(): Promise<void> {
   const previousOutputMessage = query<HTMLSpanElement>(app, "#previous-output-message");
   const previousOutputButton = query<HTMLSpanElement>(app, "#previous-output-button");
   const previousOutputFile = query<HTMLInputElement>(app, "#previous-output-file");
+  const previousOutputPreview = query<HTMLButtonElement>(app, "#previous-output-preview");
+  const previousOutputDialog = query<HTMLDialogElement>(app, "#previous-output-dialog");
   const visionEnabledControl = query<HTMLInputElement>(app, "#vision-enabled");
   const visionSettingsPanel = query<HTMLDivElement>(app, "#vision-settings");
   const visionProxyUrlInput = query<HTMLInputElement>(app, "#vision-proxy-url");
@@ -518,6 +535,24 @@ async function initialize(): Promise<void> {
    * screenshot arrives, so saving this pair's own output (on download) can't feed back into it.
    */
   let previousForPair = loadPreviousOutput();
+  /** Object URL of the image that goes with previousForPair, when one was saved. */
+  let previousImageUrl: string | undefined;
+
+  function setPreviousImage(blob: Blob | undefined): void {
+    if (previousImageUrl) URL.revokeObjectURL(previousImageUrl);
+    previousImageUrl = blob ? URL.createObjectURL(blob) : undefined;
+    for (const image of [query<HTMLImageElement>(previousOutputPreview, "img"), query<HTMLImageElement>(previousOutputDialog, "img")]) {
+      if (previousImageUrl) image.src = previousImageUrl;
+      else image.removeAttribute("src");
+    }
+    if (readings.size > 0) updatePreviousOutputBar();
+  }
+
+  /** Takes the saved previous output (values and image) as the one this pair uses. */
+  function takePreviousForPair(): void {
+    previousForPair = loadPreviousOutput();
+    void loadImage(PREVIOUS_IMAGE_KEY).then((blob) => setPreviousImage(previousForPair ? blob : undefined));
+  }
   /** Delta colors chosen for this pair; reset when the screenshots are cleared. */
   let deltaColors: Record<string, DeltaColor> = {};
   const layoutOverrides = loadLayoutOverrides();
@@ -775,6 +810,10 @@ async function initialize(): Promise<void> {
     const values: Record<string, string> = {};
     for (const [id, reading] of readings) values[id] = reading.after.value;
     savePreviousOutput({ savedAt: Date.now(), source, values });
+    // toBlob snapshots the canvas now, before a clear redraws it.
+    outputCanvas.toBlob((blob) => {
+      if (blob) void saveImage(PREVIOUS_IMAGE_KEY, blob);
+    }, "image/png");
   }
 
   downloadButton.addEventListener("click", () => {
@@ -809,7 +848,7 @@ async function initialize(): Promise<void> {
     empty.hidden = true;
     zone.classList.add("has-image");
     setPasteTarget(side === "before" ? "after" : "before");
-    if (side === "before") previousForPair = loadPreviousOutput();
+    if (side === "before") takePreviousForPair();
 
     const image = new Image();
     image.onload = () => {
@@ -1096,6 +1135,7 @@ async function initialize(): Promise<void> {
     previousOutputBar.hidden = hidden.length === 0;
     if (hidden.length === 0) return;
     const filled = hidden.filter((id) => readings.get(id)?.before.fromPrevious).length;
+    previousOutputPreview.hidden = !(previousImageUrl && filled > 0);
     if (previousForPair && filled > 0) {
       const when = new Date(previousForPair.savedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
       const how = previousForPair.source === "upload" ? "uploaded PNG" : "last output";
@@ -1108,6 +1148,12 @@ async function initialize(): Promise<void> {
       previousOutputButton.textContent = "Upload previous PNG";
     }
   }
+
+  previousOutputPreview.addEventListener("click", () => previousOutputDialog.showModal());
+  // Clicking the dimmed area around the image closes the viewer.
+  previousOutputDialog.addEventListener("click", (event) => {
+    if (event.target === previousOutputDialog) previousOutputDialog.close();
+  });
 
   previousOutputFile.addEventListener("change", () => {
     const file = previousOutputFile.files?.[0];
@@ -1131,6 +1177,8 @@ async function initialize(): Promise<void> {
       }
       previousForPair = { savedAt: Date.now(), source: "upload", values };
       savePreviousOutput(previousForPair);
+      void saveImage(PREVIOUS_IMAGE_KEY, file);
+      setPreviousImage(file);
       fillFromPrevious();
       renderStatRows();
       draw();
@@ -1476,6 +1524,7 @@ async function initialize(): Promise<void> {
   // ---------- Startup ----------
 
   await loadOutputFont(`${import.meta.env.BASE_URL}fonts/NavineDemo-SemiCondensedItalic.ttf`);
+  takePreviousForPair();
   for (const stored of await listStoredBackgrounds()) {
     backgrounds.push(uploadedBackgroundConfig(stored.id, stored.name, stored.blob));
   }
