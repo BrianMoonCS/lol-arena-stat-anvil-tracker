@@ -68,8 +68,8 @@ type StatSource = "panel" | "health" | "anvil" | "manual";
 
 const SIDES: Side[] = ["before", "after"];
 
-/** Review rows in output order. Shard shares the anvil slot ("shard | count") and is optional. */
-const STATS: Array<{ id: string; label: string; source: StatSource; optional?: boolean }> = [
+/** Review rows in output order. Shard shares the anvil slot ("shard | count"). */
+const STATS: Array<{ id: string; label: string; source: StatSource }> = [
   { id: "health", label: "Health", source: "health" },
   { id: "attackDamage", label: "Attack Damage", source: "panel" },
   { id: "abilityPower", label: "Ability Power", source: "panel" },
@@ -85,7 +85,7 @@ const STATS: Array<{ id: string; label: string; source: StatSource; optional?: b
   { id: "tenacity", label: "Tenacity", source: "panel" },
   { id: "healAndShieldPower", label: "Heal and Shield Power", source: "panel" },
   { id: "fortune", label: "Fortune", source: "manual" },
-  { id: "shard", label: "Shard", source: "manual", optional: true },
+  { id: "shard", label: "Shard", source: "manual" },
   { id: "anvilCount", label: "Anvil Count", source: "anvil" },
 ];
 
@@ -149,35 +149,15 @@ function loadVisionPreferences(): VisionPreferences {
   }
 }
 
-/** Manual fields and their defaults; their last values are remembered between visits. */
-const MANUAL_DEFAULTS: Record<string, string> = { fortune: "", shard: "0%" };
+/** Stats entered by hand (Before can also come from the previous output). */
+const MANUAL_STATS = ["fortune", "shard"];
 
-function manualStorageKey(id: string): string {
-  return `stat-anvil-${id}-v1`;
-}
-
-function loadManualValue(id: string): Record<Side, string> {
-  const fallback = MANUAL_DEFAULTS[id] ?? "";
+// Fortune and Shard used to be remembered between visits; each pair now starts them empty.
+for (const id of MANUAL_STATS) {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(manualStorageKey(id)) ?? "null");
-    if (typeof parsed === "object" && parsed !== null) {
-      const { before, after } = parsed as Partial<Record<Side, unknown>>;
-      return {
-        before: typeof before === "string" ? before : fallback,
-        after: typeof after === "string" ? after : fallback,
-      };
-    }
+    localStorage.removeItem(`stat-anvil-${id}-v1`);
   } catch {
-    // Fall through to defaults when storage is blocked or holds something unexpected.
-  }
-  return { before: fallback, after: fallback };
-}
-
-function saveManualValue(id: string, values: Record<Side, string>): void {
-  try {
-    localStorage.setItem(manualStorageKey(id), JSON.stringify(values));
-  } catch {
-    // Remembering manual values is a convenience; the review step still shows them.
+    // Nothing to clean up when storage is unavailable.
   }
 }
 
@@ -379,7 +359,7 @@ async function initialize(): Promise<void> {
       </div>
       <div class="legend">
         <span><i class="legend-swatch is-missing"></i>Missing: enter it</span>
-        <span><i class="legend-swatch is-low"></i>Double-check: low confidence or remembered from last time</span>
+        <span><i class="legend-swatch is-low"></i>Double-check: low confidence</span>
         <span><i class="legend-swatch is-previous"></i>From your previous output</span>
       </div>
     </section>
@@ -506,8 +486,6 @@ async function initialize(): Promise<void> {
     /** Passed a strict format check, so a low OCR score isn't a reason to flag it. */
     verified?: boolean;
     edited?: boolean;
-    /** Carried over from an earlier visit (Fortune), so worth a glance. */
-    remembered?: boolean;
     /** Not in this screenshot (the stat panel's top half is collapsed), so it has to be entered. */
     hidden?: boolean;
     /** Filled in from the previous output because the screenshot doesn't show it. */
@@ -522,14 +500,12 @@ async function initialize(): Promise<void> {
   const activeCropKinds: Record<Side, CropKind> = { before: "stats", after: "stats" };
   /** Readings per stat and side; empty until the first extraction finishes. */
   const readings = new Map<string, Record<Side, StatReading>>();
-  /** Manual fields aren't in the screenshots, so keep what the user typed across runs and visits. */
+  /** What the user typed into the manual fields for this pair; kept through re-reads. */
   const manualValues: Record<string, Record<Side, string>> = {};
-  /** Whether a manual field was typed this session; until then a saved value is only a suggestion. */
-  const manualConfirmed: Record<string, Record<Side, boolean>> = {};
-  for (const id of Object.keys(MANUAL_DEFAULTS)) {
-    manualValues[id] = loadManualValue(id);
-    manualConfirmed[id] = { before: false, after: false };
+  function resetManualValues(): void {
+    for (const id of MANUAL_STATS) manualValues[id] = { before: "", after: "" };
   }
+  resetManualValues();
   /**
    * The previous output this pair fills hidden Before stats from. Taken when a new Before
    * screenshot arrives, so saving this pair's own output (on download) can't feed back into it.
@@ -550,6 +526,7 @@ async function initialize(): Promise<void> {
 
   /** Takes the saved previous output (values and image) as the one this pair uses. */
   function takePreviousForPair(): void {
+    resetManualValues();
     previousForPair = loadPreviousOutput();
     void loadImage(PREVIOUS_IMAGE_KEY).then((blob) => setPreviousImage(previousForPair ? blob : undefined));
   }
@@ -883,6 +860,7 @@ async function initialize(): Promise<void> {
       zone.classList.remove("has-image");
     }
     readings.clear();
+    resetManualValues();
     deltaColors = {};
     reviewPanel.hidden = true;
     setPasteTarget("before");
@@ -1096,9 +1074,7 @@ async function initialize(): Promise<void> {
           if (source === "health") return health[side] ?? missing;
           if (source === "anvil") return anvil[side] ?? missing;
           const value = manualValues[id]![side];
-          return manualConfirmed[id]![side]
-            ? { value, confidence: 1, edited: true }
-            : { value, confidence: 1, remembered: value !== "" && value !== MANUAL_DEFAULTS[id] };
+          return value ? { value, confidence: 1, edited: true } : missing;
         };
         readings.set(id, { before: sideReading("before"), after: sideReading("after") });
       }
@@ -1118,29 +1094,25 @@ async function initialize(): Promise<void> {
   // ---------- Review table ----------
 
   /**
-   * When the Before panel is collapsed, puts the previous output's values into the Before
-   * stats the screenshot doesn't show, and into Before Fortune and Shard (the previous sheet's
-   * After values), unless those were typed this session.
+   * Puts the previous output's values (its After values) into Before Fortune and Shard, and,
+   * when the Before panel is collapsed, into the Before stats it doesn't show. Anything typed
+   * for this pair is left alone.
    */
   function fillFromPrevious(): void {
-    let collapsed = false;
     for (const id of TOP_PANEL_STATS) {
       const reading = readings.get(id);
-      if (!reading?.before.hidden) continue;
-      collapsed = true;
-      if (reading.before.edited) continue;
+      if (!reading?.before.hidden || reading.before.edited) continue;
       const value = previousForPair?.values[id] ?? "";
       reading.before = value
         ? { value, confidence: 1, hidden: true, fromPrevious: true }
         : { value: "", confidence: 0, hidden: true };
     }
-    if (collapsed) {
-      for (const id of ["fortune", "shard"]) {
-        const reading = readings.get(id);
-        const value = previousForPair?.values[id];
-        if (!reading || manualConfirmed[id]?.before || !value) continue;
-        reading.before = { value, confidence: 1, fromPrevious: true };
-      }
+    // Fortune and Shard aren't in any screenshot, so their Before always comes from here.
+    for (const id of MANUAL_STATS) {
+      const reading = readings.get(id);
+      const value = previousForPair?.values[id];
+      if (!reading || manualValues[id]?.before || !value) continue;
+      reading.before = { value, confidence: 1, fromPrevious: true };
     }
     updatePreviousOutputBar();
   }
@@ -1150,22 +1122,26 @@ async function initialize(): Promise<void> {
     items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 
   function updatePreviousOutputBar(): void {
-    const hidden = TOP_PANEL_STATS.filter((id) => readings.get(id)?.before.hidden);
-    previousOutputBar.hidden = hidden.length === 0;
-    if (hidden.length === 0) return;
-    const filled = hidden.filter((id) => readings.get(id)?.before.fromPrevious).length;
+    previousOutputBar.hidden = readings.size === 0;
+    if (readings.size === 0) return;
+    const collapsed = TOP_PANEL_STATS.some((id) => readings.get(id)?.before.hidden);
+    const filledTop = TOP_PANEL_STATS.some((id) => readings.get(id)?.before.fromPrevious);
     const filledManual = ["Fortune", "Shard"].filter((label) => readings.get(label.toLowerCase())?.before.fromPrevious);
-    previousOutputPreview.hidden = !(previousImageUrl && filled > 0);
-    if (previousForPair && filled > 0) {
+    const filled = [
+      ...(filledTop ? ["The collapsed panel's top stats"] : []),
+      ...(filledManual.length > 0 ? [`Before ${listOf(filledManual)}`] : []),
+    ];
+    previousOutputPreview.hidden = !(previousImageUrl && filled.length > 0);
+    if (previousForPair && filled.length > 0) {
       const when = new Date(previousForPair.savedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
       const how = previousForPair.source === "upload" ? "uploaded PNG" : "last output";
-      previousOutputMessage.textContent =
-        `The Before stat panel is collapsed. ${listOf(["Its top stats", ...filledManual])} ` +
-        `are filled in blue from your ${how} (${when}).`;
+      const plural = filled.length > 1 || filledManual.length > 1;
+      previousOutputMessage.textContent = `${listOf(filled)} ${plural ? "are" : "is"} filled in blue from your ${how} (${when}).`;
       previousOutputButton.textContent = "Use a different PNG";
     } else {
-      previousOutputMessage.textContent =
-        "The Before stat panel is collapsed. Upload your previous stat sheet PNG to fill in its top stats, or type them.";
+      previousOutputMessage.textContent = collapsed
+        ? "The Before stat panel is collapsed. Upload your previous stat sheet PNG to fill in its top stats, Fortune and Shard, or type them."
+        : "Upload your previous stat sheet PNG to fill in Before Fortune and Shard, or type them.";
       previousOutputButton.textContent = "Upload previous PNG";
     }
   }
@@ -1211,10 +1187,9 @@ async function initialize(): Promise<void> {
     image.src = url;
   });
 
-  function readingState(reading: StatReading, optional = false): "missing" | "low" | "ok" | "previous" {
-    if (reading.value.trim() === "") return optional ? "ok" : "missing";
+  function readingState(reading: StatReading): "missing" | "low" | "ok" | "previous" {
+    if (reading.value.trim() === "") return "missing";
     if (reading.fromPrevious) return "previous";
-    if (reading.remembered) return "low";
     if (reading.edited || reading.verified) return "ok";
     return reading.confidence < LOW_CONFIDENCE ? "low" : "ok";
   }
@@ -1222,10 +1197,9 @@ async function initialize(): Promise<void> {
   function updateReviewStatus(): void {
     let missing = 0;
     let low = 0;
-    for (const [id, reading] of readings) {
-      const optional = STATS.find((stat) => stat.id === id)?.optional;
+    for (const reading of readings.values()) {
       for (const side of SIDES) {
-        const state = readingState(reading[side], optional);
+        const state = readingState(reading[side]);
         if (state === "missing") missing += 1;
         if (state === "low") low += 1;
       }
@@ -1241,7 +1215,7 @@ async function initialize(): Promise<void> {
 
   function renderStatRows(): void {
     statRows.replaceChildren();
-    for (const { id, label, source, optional } of STATS) {
+    for (const { id, label, source } of STATS) {
       const reading = readings.get(id);
       if (!reading) continue;
       const row = document.createElement("div");
@@ -1285,10 +1259,10 @@ async function initialize(): Promise<void> {
         input.inputMode = "decimal";
         input.className = "stat-input";
         input.value = reading[side].value;
-        input.placeholder = optional ? "0%" : source === "manual" ? "enter" : "—";
+        input.placeholder = source === "manual" ? "enter" : "—";
         input.setAttribute("aria-label", `${label} ${side}`);
         const applyState = () => {
-          const state = readingState(reading[side], optional);
+          const state = readingState(reading[side]);
           input.dataset.state = state;
           input.title = reading[side].edited
             ? "Edited by you"
@@ -1296,8 +1270,6 @@ async function initialize(): Promise<void> {
               ? reading[side].hidden
                 ? `Not in the ${side} screenshot (stat panel collapsed); filled from your previous output`
                 : "Filled from your previous output (its After value)"
-            : reading[side].remembered
-              ? "Remembered from last time; check it's still right"
             : state === "missing"
               ? reading[side].hidden
                 ? `Not shown in the ${side} screenshot (stat panel collapsed); enter it`
@@ -1309,11 +1281,7 @@ async function initialize(): Promise<void> {
         applyState();
         input.addEventListener("input", () => {
           reading[side] = { value: input.value.trim(), confidence: 1, edited: true };
-          if (source === "manual") {
-            manualValues[id]![side] = input.value.trim();
-            manualConfirmed[id]![side] = true;
-            saveManualValue(id, manualValues[id]!);
-          }
+          if (source === "manual") manualValues[id]![side] = input.value.trim();
           applyState();
           updateChange();
           updateReviewStatus();
