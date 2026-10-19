@@ -1,7 +1,5 @@
-Add the three background images here with these filenames:
+Bundled backgrounds, listed in `public/config/output-config.json`.
 
-- background-1.jpg
-- background-2.jpg
-- background-3.jpg
-
-The configured canvas is 1200 x 675 (16:9). Images are scaled to fill that canvas.
+Backgrounds are 16:9 with the frame, title and stat icons baked in; the app draws only the values.
+The output image uses the background's own resolution, and slot positions in the config are
+fractions of the image, so any 16:9 size works. Users can also upload their own backgrounds in the app.

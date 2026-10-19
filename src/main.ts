@@ -1,11 +1,19 @@
 import "./styles.css";
 import {
-  renderBackground,
-  type BackgroundConfig,
-  type CanvasConfig,
-  type RenderValue,
+  loadOutputFont,
+  renderOutput,
+  type BackgroundEntry,
+  type OutputConfig,
+  type SlotLayout,
 } from "./core/render";
-import { formatStatDiff } from "./core/diff";
+import {
+  buildSlotRuns,
+  DELTA_PRESETS,
+  describeDelta,
+  type DeltaColor,
+  type StatPair,
+  type TextRun,
+} from "./core/output-format";
 import {
   clampCropRect,
   cropImageToCanvas,
@@ -55,8 +63,8 @@ type StatSource = "panel" | "health" | "anvil" | "manual";
 
 const SIDES: Side[] = ["before", "after"];
 
-/** All 16 output stats, in output-template order. */
-const STATS: Array<{ id: string; label: string; source: StatSource }> = [
+/** Review rows in output order. Shard shares the anvil slot ("shard | count") and is optional. */
+const STATS: Array<{ id: string; label: string; source: StatSource; optional?: boolean }> = [
   { id: "health", label: "Health", source: "health" },
   { id: "attackDamage", label: "Attack Damage", source: "panel" },
   { id: "abilityPower", label: "Ability Power", source: "panel" },
@@ -72,29 +80,32 @@ const STATS: Array<{ id: string; label: string; source: StatSource }> = [
   { id: "tenacity", label: "Tenacity", source: "panel" },
   { id: "healAndShieldPower", label: "Heal and Shield Power", source: "panel" },
   { id: "fortune", label: "Fortune", source: "manual" },
+  { id: "shard", label: "Shard", source: "manual", optional: true },
   { id: "anvilCount", label: "Anvil Count", source: "anvil" },
 ];
 
 /** OCR confidence below this is flagged yellow for a second look. */
 const LOW_CONFIDENCE = 0.75;
 
-const SAMPLE_VALUES: Record<string, RenderValue> = {
-  health: { value: "2,450", delta: "(+320)" },
-  attackDamage: { value: "184", delta: "(+46)" },
-  abilityPower: { value: "320", delta: "(+120)" },
-  attackSpeed: { value: "1.42", delta: "(+0.18)" },
-  armor: { value: "112", delta: "(+24)" },
-  magicResistance: { value: "68", delta: "(+8)" },
-  abilityHaste: { value: "45", delta: "(+15)" },
-  criticalStrikeChance: { value: "35%", delta: "(+15%)" },
-  omnivamp: { value: "8%", delta: "(+3%)" },
-  armorPenetration: { value: "24 | 18%", delta: "(+8 | +6%)" },
-  magicPenetration: { value: "28 | 12%", delta: "(+10 | +4%)" },
-  movementSpeed: { value: "385", delta: "(+45)" },
-  tenacity: { value: "20%", delta: "(+10%)" },
-  healAndShieldPower: { value: "15%", delta: "(+5%)" },
-  fortune: { value: "6", delta: "(+2)" },
-  anvilCount: { value: "4", delta: "(+1)" },
+/** Shown on the output preview until real values have been read. */
+const SAMPLE_PAIRS: Record<string, StatPair> = {
+  health: { before: "5187", after: "6297" },
+  attackDamage: { before: "97", after: "97" },
+  abilityPower: { before: "100", after: "112" },
+  attackSpeed: { before: "3.66", after: "5.48" },
+  armor: { before: "550", after: "648" },
+  magicResistance: { before: "577", after: "726" },
+  abilityHaste: { before: "500", after: "500" },
+  criticalStrikeChance: { before: "0%", after: "84%" },
+  omnivamp: { before: "30%", after: "34%" },
+  armorPenetration: { before: "0|0%", after: "0|0%" },
+  magicPenetration: { before: "30|0%", after: "34|0%" },
+  movementSpeed: { before: "367", after: "367" },
+  tenacity: { before: "0%", after: "0%" },
+  healAndShieldPower: { before: "0%", after: "0%" },
+  fortune: { before: "2000", after: "4000" },
+  shard: { before: "100%", after: "124%" },
+  anvilCount: { before: "51", after: "65" },
 };
 
 interface VisionPreferences {
@@ -133,30 +144,60 @@ function loadVisionPreferences(): VisionPreferences {
   }
 }
 
-const FORTUNE_STORAGE_KEY = "stat-anvil-fortune-v1";
+/** Manual fields and their defaults; their last values are remembered between visits. */
+const MANUAL_DEFAULTS: Record<string, string> = { fortune: "", shard: "0%" };
 
-function loadFortune(): Record<Side, string> {
+function manualStorageKey(id: string): string {
+  return `stat-anvil-${id}-v1`;
+}
+
+function loadManualValue(id: string): Record<Side, string> {
+  const fallback = MANUAL_DEFAULTS[id] ?? "";
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(FORTUNE_STORAGE_KEY) ?? "null");
+    const parsed: unknown = JSON.parse(localStorage.getItem(manualStorageKey(id)) ?? "null");
     if (typeof parsed === "object" && parsed !== null) {
       const { before, after } = parsed as Partial<Record<Side, unknown>>;
       return {
-        before: typeof before === "string" ? before : "",
-        after: typeof after === "string" ? after : "",
+        before: typeof before === "string" ? before : fallback,
+        after: typeof after === "string" ? after : fallback,
       };
     }
   } catch {
-    // Fall through to empty values when storage is blocked or holds something unexpected.
+    // Fall through to defaults when storage is blocked or holds something unexpected.
   }
-  return { before: "", after: "" };
+  return { before: fallback, after: fallback };
 }
 
-function saveFortune(values: Record<Side, string>): void {
+function saveManualValue(id: string, values: Record<Side, string>): void {
   try {
-    localStorage.setItem(FORTUNE_STORAGE_KEY, JSON.stringify(values));
+    localStorage.setItem(manualStorageKey(id), JSON.stringify(values));
   } catch {
-    // Remembering Fortune is a convenience; the review step still asks for it.
+    // Remembering manual values is a convenience; the review step still shows them.
   }
+}
+
+const LAYOUT_STORAGE_KEY = "stat-anvil-layout-v1";
+
+/** Per-background slot layouts the user adjusted, keyed by background id. */
+function loadLayoutOverrides(): Record<string, SlotLayout[]> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) ?? "null");
+    return typeof parsed === "object" && parsed !== null ? parsed as Record<string, SlotLayout[]> : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLayoutOverrides(overrides: Record<string, SlotLayout[]>): void {
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(overrides));
+  } catch {
+    // Without storage, layout tweaks last until the page is closed.
+  }
+}
+
+function colorCss(color: DeltaColor): string {
+  return color.kind === "solid" ? color.color : `linear-gradient(${color.top}, ${color.bottom})`;
 }
 
 function query<T extends Element>(root: ParentNode, selector: string): T {
@@ -223,10 +264,10 @@ function cropEditorMarkup(side: Side): string {
 
 async function initialize(): Promise<void> {
   const app = appElement!;
-  const configUrl = `${import.meta.env.BASE_URL}config/background-config.json`;
+  const configUrl = `${import.meta.env.BASE_URL}config/output-config.json`;
   const config = await fetch(configUrl).then((response) => {
     if (!response.ok) throw new Error("Could not load background configuration");
-    return response.json() as Promise<CanvasConfig>;
+    return response.json() as Promise<OutputConfig>;
   });
 
   app.innerHTML = `
@@ -284,6 +325,7 @@ async function initialize(): Promise<void> {
           <span role="columnheader">Before</span>
           <span role="columnheader">After</span>
           <span role="columnheader">Change</span>
+          <span role="columnheader" class="visually-hidden">Color</span>
         </div>
         <div id="stat-rows" role="rowgroup"></div>
       </div>
@@ -311,12 +353,25 @@ async function initialize(): Promise<void> {
       <div class="canvas-frame">
         <span id="sample-badge" class="sample-badge">SAMPLE DATA</span>
         <canvas id="result-canvas" aria-label="Generated stat image"></canvas>
+        <div id="layout-overlay" class="layout-overlay" hidden></div>
       </div>
       <div class="output-actions">
-        <button id="guides-toggle" class="ghost-button" type="button" aria-pressed="false">Show slot guides</button>
+        <button id="layout-reset" class="ghost-button" type="button" hidden>Reset layout</button>
+        <button id="layout-toggle" class="ghost-button" type="button" aria-pressed="false">Adjust layout</button>
         <button id="download-button" class="primary-button" type="button">Download PNG</button>
       </div>
+      <p id="layout-hint" class="disclosure-note" hidden>Drag a box to move a line; drag its corner to resize. Changes are saved for this background.</p>
     </section>
+
+    <div id="delta-color-popover" class="color-popover" popover>
+      <span class="color-popover-title">Change color</span>
+      <div class="color-presets">
+        <button class="color-chip" type="button" data-preset="green"><i style="background:${colorCss(DELTA_PRESETS.green)}"></i>Green</button>
+        <button class="color-chip" type="button" data-preset="red"><i style="background:${colorCss(DELTA_PRESETS.red)}"></i>Red</button>
+        <button class="color-chip" type="button" data-preset="purple"><i style="background:${colorCss(DELTA_PRESETS.purple)}"></i>Purple</button>
+      </div>
+      <label class="color-custom">Custom <input id="delta-color-custom" type="color" value="#00ff18" /></label>
+    </div>
 
     <details class="disclosure advanced">
       <summary>Advanced: vision fallback</summary>
@@ -345,7 +400,12 @@ async function initialize(): Promise<void> {
   const outputCanvas = query<HTMLCanvasElement>(app, "#result-canvas");
   const backgroundPicker = query<HTMLDivElement>(app, ".background-picker");
   const backgroundUploadInput = query<HTMLInputElement>(app, "#background-upload");
-  const guidesToggle = query<HTMLButtonElement>(app, "#guides-toggle");
+  const layoutToggle = query<HTMLButtonElement>(app, "#layout-toggle");
+  const layoutReset = query<HTMLButtonElement>(app, "#layout-reset");
+  const layoutHint = query<HTMLParagraphElement>(app, "#layout-hint");
+  const layoutOverlay = query<HTMLDivElement>(app, "#layout-overlay");
+  const colorPopover = query<HTMLDivElement>(app, "#delta-color-popover");
+  const colorCustomInput = query<HTMLInputElement>(app, "#delta-color-custom");
   const downloadButton = query<HTMLButtonElement>(app, "#download-button");
   const sampleBadge = query<HTMLSpanElement>(app, "#sample-badge");
   const reviewPanel = query<HTMLElement>(app, "#review");
@@ -384,52 +444,57 @@ async function initialize(): Promise<void> {
   const activeCropKinds: Record<Side, CropKind> = { before: "stats", after: "stats" };
   /** Readings per stat and side; empty until the first extraction finishes. */
   const readings = new Map<string, Record<Side, StatReading>>();
-  /** Fortune is never read from screenshots, so keep what the user typed across runs and visits. */
-  const fortune = loadFortune();
-  /** Whether Fortune was typed this session; until then a saved value is only a suggestion. */
-  const fortuneConfirmed: Record<Side, boolean> = { before: false, after: false };
+  /** Manual fields aren't in the screenshots, so keep what the user typed across runs and visits. */
+  const manualValues: Record<string, Record<Side, string>> = {};
+  /** Whether a manual field was typed this session; until then a saved value is only a suggestion. */
+  const manualConfirmed: Record<string, Record<Side, boolean>> = {};
+  for (const id of Object.keys(MANUAL_DEFAULTS)) {
+    manualValues[id] = loadManualValue(id);
+    manualConfirmed[id] = { before: false, after: false };
+  }
+  /** Delta colors chosen for this pair; reset when the screenshots are cleared. */
+  let deltaColors: Record<string, DeltaColor> = {};
+  const layoutOverrides = loadLayoutOverrides();
+  let editingLayout = false;
   let pasteTarget: Side = "before";
   let extractionRun = 0;
   let localOcrWorkerPromise: Promise<LocalOcrWorker> | undefined;
-  let showGuides = false;
 
   // ---------- Output ----------
 
-  let backgrounds: BackgroundConfig[] = [...config.backgrounds];
+  let backgrounds: BackgroundEntry[] = [...config.backgrounds];
   let selectedBackground = backgrounds[0]!;
   let selectedImage: HTMLImageElement | undefined;
 
-  const backgroundUrl = (background: BackgroundConfig) =>
+  const backgroundUrl = (background: BackgroundEntry) =>
     /^(blob:|data:|https?:)/.test(background.image)
       ? background.image
       : `${import.meta.env.BASE_URL}${background.image}`;
 
-  function displayValue(id: string, value: string): string {
-    if (!value) return "0";
-    if (id === "health" && /^\d+$/.test(value)) return Number(value).toLocaleString("en-US");
-    return value.replace(/\s*\|\s*/g, " | ");
+  const deltaColorFor = (id: string): DeltaColor =>
+    deltaColors[id] ?? (id === "shard" ? DELTA_PRESETS.purple : DELTA_PRESETS.green);
+
+  function currentLayout(): SlotLayout[] {
+    return layoutOverrides[selectedBackground.id] ?? config.layout;
   }
 
-  function outputValues(): Record<string, RenderValue> {
-    if (readings.size === 0) return SAMPLE_VALUES;
-    const values: Record<string, RenderValue> = {};
-    for (const { id } of STATS) {
-      const reading = readings.get(id);
-      if (!reading) continue;
-      values[id] = {
-        value: displayValue(id, reading.after.value),
-        delta: formatStatDiff(reading.before.value, reading.after.value),
-      };
+  function outputLines(): Record<string, TextRun[]> {
+    const values: Record<string, StatPair> = {};
+    if (readings.size === 0) {
+      Object.assign(values, SAMPLE_PAIRS);
+    } else {
+      for (const [id, reading] of readings) values[id] = { before: reading.before.value, after: reading.after.value };
     }
-    return values;
+    const colors = Object.fromEntries(STATS.map(({ id }) => [id, deltaColorFor(id)]));
+    return Object.fromEntries(currentLayout().map((slot) => [slot.id, buildSlotRuns(slot.id, values, colors)]));
   }
 
   function draw(): void {
     sampleBadge.hidden = readings.size > 0;
-    renderBackground(outputCanvas, config, selectedBackground, selectedImage, outputValues(), showGuides);
+    renderOutput(outputCanvas, config, selectedImage, currentLayout(), outputLines());
   }
 
-  function chooseBackground(background: BackgroundConfig): void {
+  function chooseBackground(background: BackgroundEntry): void {
     selectedBackground = background;
     selectedImage = undefined;
     saveSelectedBackgroundId(background.id);
@@ -437,6 +502,7 @@ async function initialize(): Promise<void> {
       option.setAttribute("aria-pressed", String(option.dataset.id === background.id));
     }
     draw();
+    renderLayoutBoxes();
     const image = new Image();
     image.onload = () => {
       if (selectedBackground.id !== background.id) return;
@@ -486,22 +552,15 @@ async function initialize(): Promise<void> {
     }
   }
 
-  function uploadedBackgroundConfig(id: string, name: string, blob: Blob): BackgroundConfig {
-    // Uploads have no slot layout of their own; the renderer falls back to the first configured one.
-    return {
-      id,
-      label: name,
-      image: URL.createObjectURL(blob),
-      backgroundColor: "#101312",
-      accentColor: "#8a8f86",
-      slots: [],
-    };
+  function uploadedBackgroundConfig(id: string, name: string, blob: Blob): BackgroundEntry {
+    // Uploads start from the default layout; "Adjust layout" can tune it per background.
+    return { id, label: name, image: URL.createObjectURL(blob) };
   }
 
   backgroundUploadInput.addEventListener("change", async () => {
     const files = Array.from(backgroundUploadInput.files ?? []).filter((file) => file.type.startsWith("image/"));
     backgroundUploadInput.value = "";
-    let last: BackgroundConfig | undefined;
+    let last: BackgroundEntry | undefined;
     for (const file of files) {
       const stored = await saveBackground(file);
       last = uploadedBackgroundConfig(stored.id, stored.name, stored.blob);
@@ -511,12 +570,138 @@ async function initialize(): Promise<void> {
     if (last) chooseBackground(last);
   });
 
-  guidesToggle.addEventListener("click", () => {
-    showGuides = !showGuides;
-    guidesToggle.setAttribute("aria-pressed", String(showGuides));
-    guidesToggle.textContent = showGuides ? "Hide slot guides" : "Show slot guides";
-    draw();
+  // Each slot is a box: its top-left is the text start, its height tracks the font size and its
+  // width is the space the line may use before it shrinks to fit.
+  const BOX_HEIGHT_PER_SIZE = 1;
+  const STAT_LABELS = Object.fromEntries(STATS.map(({ id, label }) => [id, label]));
+
+  function renderLayoutBoxes(): void {
+    layoutOverlay.hidden = !editingLayout;
+    layoutReset.hidden = !editingLayout;
+    layoutHint.hidden = !editingLayout;
+    if (!editingLayout) return;
+    layoutOverlay.replaceChildren(...currentLayout().map((slot) => {
+      const box = document.createElement("div");
+      box.className = "layout-box";
+      box.dataset.id = slot.id;
+      box.style.left = `${slot.x * 100}%`;
+      box.style.top = `${(slot.y - (slot.size * BOX_HEIGHT_PER_SIZE) / 2) * 100}%`;
+      box.style.width = `${slot.maxWidth * 100}%`;
+      box.style.height = `${slot.size * BOX_HEIGHT_PER_SIZE * 100}%`;
+      const label = document.createElement("span");
+      label.className = "layout-label";
+      label.textContent = slot.id === "anvilCount" ? "Shard | Anvil Count" : STAT_LABELS[slot.id] ?? slot.id;
+      const handle = document.createElement("span");
+      handle.className = "layout-handle";
+      box.append(label, handle);
+      return box;
+    }));
+  }
+
+  let layoutDrag: {
+    id: string;
+    mode: "move" | "resize";
+    pointerId: number;
+    startX: number;
+    startY: number;
+    initial: SlotLayout;
+  } | undefined;
+
+  layoutOverlay.addEventListener("pointerdown", (event) => {
+    const box = (event.target as HTMLElement).closest<HTMLElement>(".layout-box");
+    const slot = currentLayout().find((candidate) => candidate.id === box?.dataset.id);
+    if (!box || !slot) return;
+    const bounds = layoutOverlay.getBoundingClientRect();
+    layoutDrag = {
+      id: slot.id,
+      mode: (event.target as HTMLElement).classList.contains("layout-handle") ? "resize" : "move",
+      pointerId: event.pointerId,
+      startX: (event.clientX - bounds.left) / bounds.width,
+      startY: (event.clientY - bounds.top) / bounds.height,
+      initial: { ...slot },
+    };
+    layoutOverlay.setPointerCapture(event.pointerId);
+    event.preventDefault();
   });
+
+  layoutOverlay.addEventListener("pointermove", (event) => {
+    if (!layoutDrag || layoutDrag.pointerId !== event.pointerId) return;
+    const bounds = layoutOverlay.getBoundingClientRect();
+    const deltaX = (event.clientX - bounds.left) / bounds.width - layoutDrag.startX;
+    const deltaY = (event.clientY - bounds.top) / bounds.height - layoutDrag.startY;
+    const { initial } = layoutDrag;
+    const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+    let next: SlotLayout;
+    if (layoutDrag.mode === "move") {
+      next = { ...initial, x: clamp(initial.x + deltaX, 0, 0.98), y: clamp(initial.y + deltaY, 0.01, 0.99) };
+    } else {
+      // Resizing keeps the box's top edge fixed, so the line grows downward like a text box.
+      const top = initial.y - (initial.size * BOX_HEIGHT_PER_SIZE) / 2;
+      const size = clamp(initial.size + deltaY / BOX_HEIGHT_PER_SIZE, 0.02, 0.25);
+      next = {
+        ...initial,
+        size,
+        y: top + (size * BOX_HEIGHT_PER_SIZE) / 2,
+        maxWidth: clamp(initial.maxWidth + deltaX, 0.03, 1 - initial.x),
+      };
+    }
+    layoutOverrides[selectedBackground.id] = currentLayout().map((slot) => (slot.id === next.id ? next : slot));
+    draw();
+    renderLayoutBoxes();
+  });
+
+  const finishLayoutDrag = (event: PointerEvent) => {
+    if (layoutDrag?.pointerId !== event.pointerId) return;
+    layoutDrag = undefined;
+    saveLayoutOverrides(layoutOverrides);
+  };
+  layoutOverlay.addEventListener("pointerup", finishLayoutDrag);
+  layoutOverlay.addEventListener("pointercancel", finishLayoutDrag);
+
+  layoutToggle.addEventListener("click", () => {
+    editingLayout = !editingLayout;
+    layoutToggle.setAttribute("aria-pressed", String(editingLayout));
+    layoutToggle.textContent = editingLayout ? "Done adjusting" : "Adjust layout";
+    renderLayoutBoxes();
+  });
+
+  layoutReset.addEventListener("click", () => {
+    delete layoutOverrides[selectedBackground.id];
+    saveLayoutOverrides(layoutOverrides);
+    draw();
+    renderLayoutBoxes();
+  });
+
+  // One shared popover edits whichever row's color button opened it.
+  let colorTarget: { id: string; apply: () => void } | undefined;
+
+  function setDeltaColor(color: DeltaColor): void {
+    if (!colorTarget) return;
+    deltaColors[colorTarget.id] = color;
+    colorTarget.apply();
+    draw();
+  }
+
+  for (const chip of colorPopover.querySelectorAll<HTMLButtonElement>(".color-chip")) {
+    chip.addEventListener("click", () => {
+      setDeltaColor(DELTA_PRESETS[chip.dataset.preset as keyof typeof DELTA_PRESETS]);
+      colorPopover.hidePopover();
+    });
+  }
+  colorCustomInput.addEventListener("input", () => {
+    setDeltaColor({ kind: "solid", color: colorCustomInput.value });
+  });
+
+  function openColorPopover(anchor: HTMLElement, id: string, apply: () => void): void {
+    colorTarget = { id, apply };
+    const current = deltaColorFor(id);
+    colorCustomInput.value = current.kind === "solid" ? current.color : current.bottom;
+    colorPopover.showPopover();
+    const rect = anchor.getBoundingClientRect();
+    const width = colorPopover.offsetWidth;
+    colorPopover.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))}px`;
+    colorPopover.style.top = `${rect.bottom + 6}px`;
+  }
 
   downloadButton.addEventListener("click", () => {
     const link = document.createElement("a");
@@ -582,6 +767,7 @@ async function initialize(): Promise<void> {
       zone.classList.remove("has-image");
     }
     readings.clear();
+    deltaColors = {};
     reviewPanel.hidden = true;
     setPasteTarget("before");
     draw();
@@ -788,9 +974,10 @@ async function initialize(): Promise<void> {
           if (source === "panel") return panelStats[side].find((stat) => stat.id === id) ?? missing;
           if (source === "health") return health[side] ?? missing;
           if (source === "anvil") return anvil[side] ?? missing;
-          return fortuneConfirmed[side]
-            ? { value: fortune[side], confidence: 1, edited: true }
-            : { value: fortune[side], confidence: 1, remembered: fortune[side] !== "" };
+          const value = manualValues[id]![side];
+          return manualConfirmed[id]![side]
+            ? { value, confidence: 1, edited: true }
+            : { value, confidence: 1, remembered: value !== "" && value !== MANUAL_DEFAULTS[id] };
         };
         readings.set(id, { before: sideReading("before"), after: sideReading("after") });
       }
@@ -808,8 +995,8 @@ async function initialize(): Promise<void> {
 
   // ---------- Review table ----------
 
-  function readingState(reading: StatReading): "missing" | "low" | "ok" {
-    if (reading.value.trim() === "") return "missing";
+  function readingState(reading: StatReading, optional = false): "missing" | "low" | "ok" {
+    if (reading.value.trim() === "") return optional ? "ok" : "missing";
     if (reading.remembered) return "low";
     if (reading.edited || reading.verified) return "ok";
     return reading.confidence < LOW_CONFIDENCE ? "low" : "ok";
@@ -818,9 +1005,10 @@ async function initialize(): Promise<void> {
   function updateReviewStatus(): void {
     let missing = 0;
     let low = 0;
-    for (const reading of readings.values()) {
+    for (const [id, reading] of readings) {
+      const optional = STATS.find((stat) => stat.id === id)?.optional;
       for (const side of SIDES) {
-        const state = readingState(reading[side]);
+        const state = readingState(reading[side], optional);
         if (state === "missing") missing += 1;
         if (state === "low") low += 1;
       }
@@ -834,7 +1022,7 @@ async function initialize(): Promise<void> {
 
   function renderStatRows(): void {
     statRows.replaceChildren();
-    for (const { id, label, source } of STATS) {
+    for (const { id, label, source, optional } of STATS) {
       const reading = readings.get(id);
       if (!reading) continue;
       const row = document.createElement("div");
@@ -855,8 +1043,22 @@ async function initialize(): Promise<void> {
       const change = document.createElement("span");
       change.className = "stat-change";
       const updateChange = () => {
-        change.textContent = formatStatDiff(reading.before.value, reading.after.value) || "—";
+        change.textContent = describeDelta(id, { before: reading.before.value, after: reading.after.value }) || "—";
+        const color = deltaColorFor(id);
+        change.style.color = color.kind === "solid" ? color.color : "";
+        change.style.backgroundImage = color.kind === "gradient" ? colorCss(color) : "";
+        change.classList.toggle("is-gradient", color.kind === "gradient");
       };
+
+      const colorButton = document.createElement("button");
+      colorButton.type = "button";
+      colorButton.className = "delta-color";
+      colorButton.setAttribute("aria-label", `${label} change color`);
+      const applyColor = () => {
+        colorButton.style.background = colorCss(deltaColorFor(id));
+        updateChange();
+      };
+      colorButton.addEventListener("click", () => openColorPopover(colorButton, id, applyColor));
 
       const inputs = SIDES.map((side) => {
         const input = document.createElement("input");
@@ -864,10 +1066,10 @@ async function initialize(): Promise<void> {
         input.inputMode = "decimal";
         input.className = "stat-input";
         input.value = reading[side].value;
-        input.placeholder = source === "manual" ? "enter" : "—";
+        input.placeholder = optional ? "0%" : source === "manual" ? "enter" : "—";
         input.setAttribute("aria-label", `${label} ${side}`);
         const applyState = () => {
-          const state = readingState(reading[side]);
+          const state = readingState(reading[side], optional);
           input.dataset.state = state;
           input.title = reading[side].edited
             ? "Edited by you"
@@ -883,9 +1085,9 @@ async function initialize(): Promise<void> {
         input.addEventListener("input", () => {
           reading[side] = { value: input.value.trim(), confidence: 1, edited: true };
           if (source === "manual") {
-            fortune[side] = input.value.trim();
-            fortuneConfirmed[side] = true;
-            saveFortune(fortune);
+            manualValues[id]![side] = input.value.trim();
+            manualConfirmed[id]![side] = true;
+            saveManualValue(id, manualValues[id]!);
           }
           applyState();
           updateChange();
@@ -895,8 +1097,8 @@ async function initialize(): Promise<void> {
         return input;
       });
 
-      updateChange();
-      row.append(name, ...inputs, change);
+      applyColor();
+      row.append(name, ...inputs, change, colorButton);
       statRows.append(row);
     }
     updateReviewStatus();
@@ -1112,6 +1314,7 @@ async function initialize(): Promise<void> {
 
   // ---------- Startup ----------
 
+  await loadOutputFont(`${import.meta.env.BASE_URL}fonts/NavineDemo-SemiCondensedItalic.ttf`);
   for (const stored of await listStoredBackgrounds()) {
     backgrounds.push(uploadedBackgroundConfig(stored.id, stored.name, stored.blob));
   }

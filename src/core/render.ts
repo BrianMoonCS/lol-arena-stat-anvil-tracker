@@ -1,127 +1,150 @@
-export interface SlotConfig {
+import type { DeltaColor, TextRun } from "./output-format";
+
+/** One output line. x and maxWidth are fractions of image width; y and size of image height. */
+export interface SlotLayout {
   id: string;
+  /** Left edge of the text. */
   x: number;
+  /** Vertical center of the digits. */
   y: number;
-  width: number;
-  fontFamily: string;
-  fontSize: number;
-  color: string;
-  align: CanvasTextAlign;
-  deltaColor: string;
-  deltaOffsetX: number;
+  /** Font size. */
+  size: number;
+  /** Lines wider than this shrink to fit. */
+  maxWidth: number;
 }
 
-export interface BackgroundConfig {
+export interface BackgroundEntry {
   id: string;
   label: string;
+  /** Path under the site root, or a blob:/data: URL for uploads. */
   image: string;
-  backgroundColor: string;
-  accentColor: string;
-  slots: SlotConfig[];
 }
 
-export interface CanvasConfig {
-  width: number;
-  height: number;
-  backgrounds: BackgroundConfig[];
+export interface OutputConfig {
+  defaultSize: { width: number; height: number };
+  layout: SlotLayout[];
+  backgrounds: BackgroundEntry[];
 }
 
-export interface RenderValue {
-  value: string;
-  delta?: string;
+export const OUTPUT_FONT_FAMILY = "Navine Output";
+
+// Measured from the sample outputs: digits are 0.712 em tall with their center 0.356 em above the
+// baseline, the black outline extends about 0.073 em past the glyph on every side, and
+// neighbouring pieces sit a constant 0.265 em apart, edge to edge.
+const DIGIT_CENTER_EM = 0.356;
+const DIGIT_TOP_EM = 0.712;
+const OUTLINE_EM = 0.147;
+/** Visible gap between a value, its delta and a "|" separator. */
+const PIECE_GAP_EM = 0.265;
+
+export async function loadOutputFont(url: string): Promise<void> {
+  try {
+    const font = new FontFace(OUTPUT_FONT_FAMILY, `url("${url}")`, { style: "italic" });
+    document.fonts.add(await font.load());
+  } catch {
+    // Fall back to the browser's italic sans-serif; the layout still works, the look won't match.
+  }
 }
 
-export function renderBackground(
+function fontAt(size: number): string {
+  return `italic ${size}px "${OUTPUT_FONT_FAMILY}", sans-serif`;
+}
+
+interface PlacedPiece {
+  text: string;
+  color?: DeltaColor;
+  /** Text origin, relative to the slot's left edge. */
+  offset: number;
+}
+
+/**
+ * Places each piece of a line (value, delta, "|") so the visible gap between neighbouring
+ * pieces is constant, matching the reference outputs; spacing by the space character instead
+ * would vary with glyph shapes. Whitespace-only runs just mark where those gaps go.
+ */
+function placePieces(
+  context: CanvasRenderingContext2D,
+  runs: TextRun[],
+  size: number,
+): { pieces: PlacedPiece[]; width: number } {
+  context.font = fontAt(size);
+  const pieces: PlacedPiece[] = [];
+  let inkRight: number | undefined;
+  for (const run of runs) {
+    const text = run.text.trim();
+    if (!text) continue;
+    const metrics = context.measureText(text);
+    const offset = inkRight === undefined
+      ? 0
+      : inkRight + size * PIECE_GAP_EM + metrics.actualBoundingBoxLeft;
+    pieces.push({ text, color: run.color, offset });
+    inkRight = offset + metrics.actualBoundingBoxRight;
+  }
+  return { pieces, width: inkRight ?? 0 };
+}
+
+/** Font size in pixels after shrinking a line to fit its slot's maximum width. */
+export function fittedFontSize(
+  context: CanvasRenderingContext2D,
+  runs: TextRun[],
+  size: number,
+  maxWidth: number,
+): number {
+  // Widths scale linearly with font size, so one measurement gives the fitted size.
+  const { width } = placePieces(context, runs, size);
+  return width > maxWidth ? size * (maxWidth / width) : size;
+}
+
+function deltaFill(
+  context: CanvasRenderingContext2D,
+  color: DeltaColor,
+  baseline: number,
+  size: number,
+): string | CanvasGradient {
+  if (color.kind === "solid") return color.color;
+  const gradient = context.createLinearGradient(0, baseline - size * DIGIT_TOP_EM, 0, baseline);
+  gradient.addColorStop(0, color.top);
+  gradient.addColorStop(1, color.bottom);
+  return gradient;
+}
+
+/** Draws the background at its own resolution, then every slot's text runs over it. */
+export function renderOutput(
   canvas: HTMLCanvasElement,
-  config: CanvasConfig,
-  background: BackgroundConfig,
+  config: OutputConfig,
   backgroundImage: HTMLImageElement | undefined,
-  values: Record<string, RenderValue>,
-  debug: boolean,
+  layout: SlotLayout[],
+  lines: Record<string, TextRun[]>,
 ): void {
   const context = canvas.getContext("2d");
   if (!context) return;
 
-  canvas.width = config.width;
-  canvas.height = config.height;
-  context.fillStyle = background.backgroundColor;
-  context.fillRect(0, 0, config.width, config.height);
+  const width = backgroundImage?.naturalWidth || config.defaultSize.width;
+  const height = backgroundImage?.naturalHeight || config.defaultSize.height;
+  canvas.width = width;
+  canvas.height = height;
+  context.fillStyle = "#000";
+  context.fillRect(0, 0, width, height);
+  if (backgroundImage) context.drawImage(backgroundImage, 0, 0, width, height);
 
-  if (backgroundImage) {
-    context.drawImage(backgroundImage, 0, 0, config.width, config.height);
-  } else {
-    context.fillStyle = background.accentColor;
-    context.fillRect(0, 0, 14, config.height);
-    context.fillRect(0, 0, config.width, 5);
-  }
+  context.textBaseline = "alphabetic";
+  context.textAlign = "left";
+  context.lineJoin = "round";
+  for (const slot of layout) {
+    const runs = lines[slot.id];
+    if (!runs || runs.length === 0) continue;
+    const size = fittedFontSize(context, runs, slot.size * height, slot.maxWidth * width);
+    const { pieces } = placePieces(context, runs, size);
+    const baseline = slot.y * height + size * DIGIT_CENTER_EM;
+    const left = slot.x * width;
 
-  context.fillStyle = background.accentColor;
-  if (!backgroundImage) {
-    context.strokeStyle = "rgba(239, 231, 211, 0.16)";
-    context.lineWidth = 1;
-    context.beginPath();
-    context.moveTo(config.width / 2, 70);
-    context.lineTo(config.width / 2, config.height - 45);
-    context.moveTo(48, config.height / 2);
-    context.lineTo(config.width - 48, config.height / 2);
-    context.stroke();
-  }
-
-  if (!backgroundImage) {
-    context.fillStyle = "rgba(239, 231, 211, 0.66)";
-    context.font = "12px ui-monospace, monospace";
-    context.textAlign = "left";
-    context.fillText(
-      `${background.label.toUpperCase()} / BACKGROUND PREVIEW`,
-      48,
-      43,
-    );
-  }
-
-  const slots =
-    background.slots.length > 0
-      ? background.slots
-      : (config.backgrounds.find((candidate) => candidate.slots.length > 0)
-          ?.slots ?? []);
-
-  for (const slot of slots) {
-    const renderValue = values[slot.id];
-    if (!renderValue) continue;
-
-    context.font = `${slot.fontSize}px ${slot.fontFamily}`;
-    context.textAlign = slot.align;
-    context.textBaseline = "middle";
-    context.fillStyle = slot.color;
-    context.fillText(renderValue.value, slot.x, slot.y);
-
-    if (renderValue.delta) {
-      const valueWidth = context.measureText(renderValue.value).width;
-      const deltaX =
-        slot.align === "right"
-          ? slot.x - valueWidth - slot.deltaOffsetX
-          : slot.x + valueWidth + slot.deltaOffsetX;
-      context.fillStyle = slot.deltaColor;
-      context.fillText(renderValue.delta, deltaX, slot.y);
-    }
-
-    if (debug) {
-      context.save();
-      context.strokeStyle = "#f5c451";
-      context.lineWidth = 1;
-      context.setLineDash([5, 4]);
-      context.strokeRect(
-        slot.x,
-        slot.y - slot.fontSize,
-        slot.width,
-        slot.fontSize * 1.8,
-      );
-      context.setLineDash([]);
-      context.fillStyle = "#f5c451";
-      context.font = "10px ui-monospace, monospace";
-      context.textAlign = "left";
-      context.textBaseline = "alphabetic";
-      context.fillText(slot.id, slot.x + 4, slot.y - slot.fontSize - 4);
-      context.restore();
+    // Outline every piece first so no outline paints over a neighbouring piece's fill.
+    context.lineWidth = size * OUTLINE_EM;
+    context.strokeStyle = "#000";
+    for (const piece of pieces) context.strokeText(piece.text, left + piece.offset, baseline);
+    for (const piece of pieces) {
+      context.fillStyle = piece.color ? deltaFill(context, piece.color, baseline, size) : "#fff";
+      context.fillText(piece.text, left + piece.offset, baseline);
     }
   }
 }

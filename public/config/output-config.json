@@ -1,0 +1,138 @@
+{
+  "_comment": "Slot x/maxWidth are fractions of image width; y (vertical center of the digits) and size (font size) are fractions of image height.",
+  "defaultSize": {
+    "width": 1536,
+    "height": 864
+  },
+  "layout": [
+    {
+      "id": "health",
+      "x": 0.1514,
+      "y": 0.2375,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "attackDamage",
+      "x": 0.1514,
+      "y": 0.3304,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "abilityPower",
+      "x": 0.1514,
+      "y": 0.4276,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "attackSpeed",
+      "x": 0.1514,
+      "y": 0.524,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "armor",
+      "x": 0.1514,
+      "y": 0.6221,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "magicResistance",
+      "x": 0.1514,
+      "y": 0.7193,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "abilityHaste",
+      "x": 0.1514,
+      "y": 0.8139,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "criticalStrikeChance",
+      "x": 0.1514,
+      "y": 0.912,
+      "size": 0.0829,
+      "maxWidth": 0.3436
+    },
+    {
+      "id": "omnivamp",
+      "x": 0.5688,
+      "y": 0.241,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    },
+    {
+      "id": "armorPenetration",
+      "x": 0.5688,
+      "y": 0.3304,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    },
+    {
+      "id": "magicPenetration",
+      "x": 0.5688,
+      "y": 0.4276,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    },
+    {
+      "id": "movementSpeed",
+      "x": 0.5688,
+      "y": 0.5266,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    },
+    {
+      "id": "tenacity",
+      "x": 0.5688,
+      "y": 0.6229,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    },
+    {
+      "id": "healAndShieldPower",
+      "x": 0.5688,
+      "y": 0.7193,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    },
+    {
+      "id": "fortune",
+      "x": 0.5688,
+      "y": 0.82,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    },
+    {
+      "id": "anvilCount",
+      "x": 0.5688,
+      "y": 0.9111,
+      "size": 0.0829,
+      "maxWidth": 0.4062
+    }
+  ],
+  "backgrounds": [
+    {
+      "id": "background-1",
+      "label": "Background 1",
+      "image": "backgrounds/background-1.jpg"
+    },
+    {
+      "id": "background-2",
+      "label": "Background 2",
+      "image": "backgrounds/background-2.jpg"
+    },
+    {
+      "id": "background-3",
+      "label": "Background 3",
+      "image": "backgrounds/background-3.jpg"
+    }
+  ]
+}

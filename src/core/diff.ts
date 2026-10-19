@@ -1,6 +1,6 @@
 type StatInput = string | null | undefined;
 
-interface ParsedPart {
+export interface ParsedPart {
   value: number;
   decimals: number;
   isPercent: boolean;
@@ -8,7 +8,8 @@ interface ParsedPart {
 
 const MAX_DECIMAL_PLACES = 6;
 
-function parsePart(input: string): ParsedPart | undefined {
+/** Parses one stat value such as "1,450", "2.83" or "40%"; blank reads as 0. */
+export function parsePart(input: string): ParsedPart | undefined {
   const value = input.trim().replaceAll(",", "");
   if (!value) return { value: 0, decimals: 0, isPercent: false };
 
